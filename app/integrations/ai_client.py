@@ -1,88 +1,103 @@
 """
-Social Pulse API — Claude AI Client
-Builds prompts from video patterns and calls Anthropic Claude API.
+Social Pulse API — Enhanced AI Client
+Added: content_calendar generation, hashtag research, posting_time analysis.
 """
 import json
 from flask import current_app
 
 SUGGESTION_TYPE_INSTRUCTIONS = {
     "title": (
-        "Generate 5 compelling YouTube/social media video title ideas "
-        "that are highly clickable, SEO-optimized, and match the content patterns below. "
-        "Return JSON: {\"titles\": [\"Title 1\", ..., \"Title 5\"], \"reasoning\": \"...\"}"
+        "Generate 5 compelling, SEO-optimized video title ideas that are highly clickable "
+        "and match the content patterns below. Each title should be under 70 characters. "
+        "Return JSON: {\"titles\": [\"Title 1\", ..., \"Title 5\"], \"reasoning\": \"...\", \"seo_tips\": \"...\"}"
     ),
     "caption": (
-        "Write 3 engaging social media captions (short, medium, long variants) "
-        "that would work well for the content pattern below. "
-        "Return JSON: {\"captions\": [{\"length\": \"short\", \"text\": \"...\"}, ...]}"
+        "Write 3 engaging social media captions (short=<100 chars, medium=<300 chars, long=<600 chars) "
+        "optimized for the platform patterns below. Include relevant emojis. "
+        "Return JSON: {\"captions\": [{\"length\": \"short\", \"text\": \"...\", \"character_count\": N}, ...]}"
     ),
     "hook": (
-        "Generate 5 powerful video hook lines (first 5-10 seconds) "
-        "that instantly capture viewer attention based on these patterns. "
-        "Return JSON: {\"hooks\": [\"Hook 1\", ..., \"Hook 5\"], \"reasoning\": \"...\"}"
+        "Generate 5 powerful video hook lines for the first 5-10 seconds "
+        "that instantly capture viewer attention and create curiosity. "
+        "Return JSON: {\"hooks\": [\"Hook 1\", ..., \"Hook 5\"], \"hook_types\": [\"curiosity\", \"stat\", ...], \"reasoning\": \"...\"}"
     ),
     "hashtag": (
-        "Suggest 20 highly relevant hashtags (mix of popular and niche) "
-        "based on the content patterns below. "
-        "Return JSON: {\"hashtags\": [\"#tag1\", ...], \"categories\": {\"broad\": [...], \"niche\": [...]}}"
+        "Suggest 20 highly relevant hashtags grouped by category (trending, niche, branded) "
+        "based on the content patterns below. Also suggest 5 hashtags to avoid. "
+        "Return JSON: {\"hashtags\": [\"#tag1\", ...], \"categories\": {\"trending\": [...], \"niche\": [...], \"branded\": [...]}, \"avoid\": [...]}"
     ),
     "thumbnail_concept": (
-        "Describe 3 thumbnail concepts (colors, text overlay, composition, emotions) "
-        "that would maximize click-through rate based on these video patterns. "
-        "Return JSON: {\"concepts\": [{\"title\": \"...\", \"description\": \"...\", \"colors\": [...]}]}"
+        "Describe 3 detailed thumbnail concepts (colors, text overlay, composition, emotion, contrast) "
+        "that would maximize click-through rate for this content niche. "
+        "Return JSON: {\"concepts\": [{\"title\": \"...\", \"description\": \"...\", \"colors\": [...], \"text_overlay\": \"...\", \"emotion\": \"...\", \"ctr_score\": N}]}"
     ),
     "posting_time": (
-        "Based on these video performance patterns, recommend the top 3 best days/times "
-        "to post new content for maximum reach. "
-        "Return JSON: {\"recommendations\": [{\"day\": \"Monday\", \"time\": \"18:00\", \"reason\": \"...\"}]}"
+        "Based on these video performance patterns, recommend the top 3 posting windows "
+        "with day, time, timezone, and detailed reasoning. Also suggest content frequency. "
+        "Return JSON: {\"recommendations\": [{\"day\": \"...\", \"time\": \"...\", \"timezone\": \"EST\", \"reason\": \"...\", \"expected_boost\": \"...\"}], \"frequency\": \"...\"}"
     ),
     "content_calendar": (
-        "Create a 4-week content calendar with topic ideas, formats, and posting schedule "
-        "based on these performance patterns. "
-        "Return JSON: {\"weeks\": [{\"week\": 1, \"posts\": [{\"day\": \"Mon\", \"topic\": \"...\", \"format\": \"...\"}]}]}"
+        "Create a 4-week content calendar with topic ideas, formats, posting schedule, "
+        "and estimated performance notes based on these patterns. "
+        "Return JSON: {\"weeks\": [{\"week\": 1, \"theme\": \"...\", \"posts\": [{\"day\": \"...\", \"topic\": \"...\", \"format\": \"...\", \"duration\": \"...\", \"note\": \"...\"}]}]}"
     ),
 }
 
 
 def _build_prompt(suggestion_type: str, videos: list, account_name: str = "") -> str:
-    """Build a detailed prompt from video patterns for Claude."""
     instruction = SUGGESTION_TYPE_INSTRUCTIONS.get(
         suggestion_type,
         "Generate a content suggestion based on these patterns."
     )
-
-    # Build pattern summary
     top_videos = sorted(videos, key=lambda v: v.get("views", 0), reverse=True)[:10]
     pattern_lines = []
     for i, v in enumerate(top_videos, 1):
         tags = ", ".join((v.get("tags") or [])[:5]) or "none"
+        duration_min = f"{v.get('duration_seconds', 0) // 60}m" if v.get("duration_seconds") else "unknown"
         pattern_lines.append(
             f"{i}. \"{v.get('title', 'No title')}\" | "
             f"Views: {v.get('views', 0):,} | "
             f"Likes: {v.get('likes', 0):,} | "
             f"Comments: {v.get('comments', 0):,} | "
-            f"Duration: {v.get('duration_seconds', 0)}s | "
+            f"Engagement: {v.get('engagement_rate', 0):.2f}% | "
+            f"Duration: {duration_min} | "
             f"Tags: {tags}"
         )
-
-    patterns_text = "\n".join(pattern_lines) if pattern_lines else "No videos available."
+    patterns_text = "\n".join(pattern_lines) if pattern_lines else "No videos available yet."
     account_line = f"Channel/Account: {account_name}\n" if account_name else ""
+
+    # Compute some aggregate insights
+    if top_videos:
+        avg_views = sum(v.get("views", 0) for v in top_videos) // max(len(top_videos), 1)
+        avg_eng = sum(v.get("engagement_rate", 0) for v in top_videos) / max(len(top_videos), 1)
+        duration_most_common = max(set(
+            "short (<5m)" if (v.get("duration_seconds") or 0) < 300 else
+            "medium (5-15m)" if (v.get("duration_seconds") or 0) < 900 else "long (15m+)"
+            for v in top_videos
+        ), key=lambda x: [
+            "short (<5m)" if (v.get("duration_seconds") or 0) < 300 else
+            "medium (5-15m)" if (v.get("duration_seconds") or 0) < 900 else "long (15m+)"
+            for v in top_videos
+        ].count(x))
+        insights = (
+            f"\nInsights: Avg views={avg_views:,} | Avg engagement={avg_eng:.2f}% | "
+            f"Best performing duration={duration_most_common}"
+        )
+    else:
+        insights = ""
 
     prompt = (
         f"You are an expert social media growth strategist for Social Pulse.\n\n"
         f"{account_line}"
-        f"Task: {instruction}\n\n"
+        f"Task: {instruction}\n"
+        f"{insights}\n\n"
         f"Top performing videos/posts (sorted by views):\n{patterns_text}\n\n"
-        f"Provide ONLY valid JSON as your response. No markdown, no explanation outside the JSON."
+        f"Provide ONLY valid JSON as your response. No markdown code blocks, no explanation outside the JSON."
     )
     return prompt
 
 
 def generate_suggestion(suggestion_type: str, videos: list, account_name: str = "") -> dict:
-    """
-    Call Claude API to generate a content suggestion.
-    Falls back to mock data if ANTHROPIC_API_KEY is not set.
-    """
     api_key = current_app.config.get("ANTHROPIC_API_KEY", "")
     prompt = _build_prompt(suggestion_type, videos, account_name)
 
@@ -99,11 +114,9 @@ def generate_suggestion(suggestion_type: str, videos: list, account_name: str = 
             messages=[{"role": "user", "content": prompt}],
         )
         raw_text = message.content[0].text.strip()
-        # Try to extract JSON
         try:
             return json.loads(raw_text)
         except json.JSONDecodeError:
-            # Find JSON in response
             import re
             match = re.search(r"\{.*\}", raw_text, re.DOTALL)
             if match:
@@ -115,7 +128,6 @@ def generate_suggestion(suggestion_type: str, videos: list, account_name: str = 
 
 
 def _stub_suggestion(suggestion_type: str, account_name: str = "") -> dict:
-    """Return realistic stub data for demo purposes."""
     stubs = {
         "title": {
             "titles": [
@@ -126,12 +138,13 @@ def _stub_suggestion(suggestion_type: str, account_name: str = "") -> dict:
                 "The Algorithm Decoded: Your Complete 2026 Growth Playbook",
             ],
             "reasoning": "Titles use curiosity gaps, social proof, and specific numbers for maximum CTR.",
+            "seo_tips": "Include your primary keyword in the first 40 characters for YouTube SEO.",
         },
         "caption": {
             "captions": [
-                {"length": "short", "text": "Growth doesn't happen overnight. But with the right strategy, it accelerates. 🚀"},
-                {"length": "medium", "text": "After analyzing 1,000+ viral videos, I found the common pattern. It's not luck — it's a system. Here's what separates the top 1% of creators from everyone else 👇"},
-                {"length": "long", "text": "I spent 6 months studying every viral video in my niche and found something surprising: the best-performing content all shared 3 key elements...\n\n1. A strong hook that creates instant curiosity\n2. A clear promise delivered in the first 30 seconds\n3. A surprising twist or reveal\n\nSave this for your next post and watch your engagement soar! What's your biggest content challenge? Comment below 💬"},
+                {"length": "short", "text": "Growth doesn't happen overnight. But with the right strategy, it accelerates. 🚀", "character_count": 80},
+                {"length": "medium", "text": "After analyzing 1,000+ viral videos, I found the common pattern. It's not luck — it's a system. Here's what separates the top 1% of creators from everyone else 👇", "character_count": 168},
+                {"length": "long", "text": "I spent 6 months studying every viral video in my niche and found something surprising: the best-performing content all shared 3 key elements...\n\n1. A strong hook that creates instant curiosity\n2. A clear promise delivered in the first 30 seconds\n3. A surprising twist or reveal\n\nSave this for your next post and watch your engagement soar! What's your biggest content challenge? Comment below 💬", "character_count": 412},
             ],
         },
         "hook": {
@@ -142,6 +155,7 @@ def _stub_suggestion(suggestion_type: str, account_name: str = "") -> dict:
                 "What if I told you the algorithm doesn't care about your production quality?",
                 "This single change doubled my views overnight — and it took me 2 minutes to implement.",
             ],
+            "hook_types": ["curiosity", "problem", "promise", "challenge", "result"],
             "reasoning": "Each hook creates curiosity, promises value, and uses pattern interrupts.",
         },
         "hashtag": {
@@ -151,33 +165,45 @@ def _stub_suggestion(suggestion_type: str, account_name: str = "") -> dict:
                          "#youtuber", "#instagramgrowth", "#tiktokmarketing", "#personalbranding",
                          "#smallbusiness", "#entrepreneur", "#onlinemarketing", "#contentcreation"],
             "categories": {
-                "broad": ["#contentcreator", "#socialmediagrowth", "#digitalmarketing", "#entrepreneur"],
-                "niche": ["#youtubegrowth", "#growyourchannel", "#creatoreconomy", "#videomarketing"],
+                "trending": ["#contentcreator", "#viralcontent", "#creatoreconomy"],
+                "niche": ["#youtubegrowth", "#growyourchannel", "#videomarketing"],
+                "branded": ["#socialmediagrowth", "#contentmarketing"],
             },
+            "avoid": ["#follow4follow", "#like4like", "#spammy", "#irrelevant", "#banned"],
         },
         "posting_time": {
             "recommendations": [
-                {"day": "Tuesday", "time": "18:00", "timezone": "EST", "reason": "Highest audience activity based on engagement patterns"},
-                {"day": "Thursday", "time": "19:30", "timezone": "EST", "reason": "Second peak — midweek viewership surge"},
-                {"day": "Saturday", "time": "10:00", "timezone": "EST", "reason": "Weekend morning browsing window with lower competition"},
+                {"day": "Tuesday", "time": "18:00", "timezone": "EST", "reason": "Highest audience activity based on engagement patterns", "expected_boost": "+25% reach"},
+                {"day": "Thursday", "time": "19:30", "timezone": "EST", "reason": "Second peak — midweek viewership surge", "expected_boost": "+18% reach"},
+                {"day": "Saturday", "time": "10:00", "timezone": "EST", "reason": "Weekend morning browsing window with lower competition", "expected_boost": "+15% reach"},
             ],
+            "frequency": "3 videos/week for maximum algorithm favor without burnout",
         },
         "thumbnail_concept": {
             "concepts": [
                 {
                     "title": "High-Contrast Emotion",
-                    "description": "Bright yellow background with bold text overlay. Show a surprised/excited face on the left, text on the right. Keep it simple and readable at 100px.",
+                    "description": "Bright yellow background with bold text overlay. Show a surprised/excited face on the left, text on the right.",
                     "colors": ["#FFDD00", "#FF4136", "#FFFFFF"],
+                    "text_overlay": "SHOCKING TRUTH ABOUT...",
+                    "emotion": "Surprise/Excitement",
+                    "ctr_score": 8.5,
                 },
                 {
                     "title": "Before/After Split",
-                    "description": "Split screen showing transformation. Left side muted/grey, right side vibrant and colorful. Numbers in the center for social proof.",
+                    "description": "Split screen showing transformation. Left side muted/grey, right side vibrant and colorful.",
                     "colors": ["#2ECC71", "#1A1A2E", "#FFFFFF"],
+                    "text_overlay": "Before vs After",
+                    "emotion": "Transformation/Hope",
+                    "ctr_score": 7.8,
                 },
                 {
                     "title": "Minimalist Authority",
-                    "description": "Dark background with one strong visual element and a power statement in large white text. Conveys expertise and trust.",
+                    "description": "Dark background with one strong visual and a power statement in large white text.",
                     "colors": ["#0E172A", "#4F46E5", "#FFFFFF"],
+                    "text_overlay": "THE METHOD THAT WORKS",
+                    "emotion": "Trust/Authority",
+                    "ctr_score": 7.2,
                 },
             ],
         },
@@ -185,23 +211,23 @@ def _stub_suggestion(suggestion_type: str, account_name: str = "") -> dict:
             "weeks": [
                 {
                     "week": 1,
-                    "theme": "Foundation",
+                    "theme": "Foundation & Introduction",
                     "posts": [
-                        {"day": "Monday", "topic": "My journey & channel introduction video", "format": "Talking head + B-roll", "duration": "8-12 min"},
-                        {"day": "Wednesday", "topic": "Top 5 tools I use daily (affiliate opportunity)", "format": "Screen recording + voiceover", "duration": "10-15 min"},
-                        {"day": "Friday", "topic": "Community Q&A - answer comments from week 1", "format": "Casual talking head", "duration": "5-8 min"},
+                        {"day": "Monday", "topic": "Channel intro + value proposition", "format": "Talking head", "duration": "8-12 min", "note": "Establish brand voice"},
+                        {"day": "Wednesday", "topic": "Top 5 tools I use daily", "format": "Screen recording", "duration": "10-15 min", "note": "High search volume topic"},
+                        {"day": "Friday", "topic": "Community Q&A", "format": "Casual vlog", "duration": "5-8 min", "note": "Builds engagement"},
                     ],
                 },
                 {
                     "week": 2,
-                    "theme": "Value & Education",
+                    "theme": "Education & Value",
                     "posts": [
-                        {"day": "Tuesday", "topic": "In-depth tutorial on your core skill", "format": "Tutorial/walkthrough", "duration": "15-20 min"},
-                        {"day": "Thursday", "topic": "Common mistakes in your niche (reaction video)", "format": "Reaction + commentary", "duration": "10-12 min"},
-                        {"day": "Saturday", "topic": "Behind the scenes - content creation process", "format": "Vlog style", "duration": "6-10 min"},
+                        {"day": "Tuesday", "topic": "Deep-dive tutorial on core skill", "format": "Tutorial", "duration": "15-20 min", "note": "Evergreen content"},
+                        {"day": "Thursday", "topic": "Common mistakes in niche", "format": "Reaction", "duration": "10-12 min", "note": "High engagement topic"},
+                        {"day": "Saturday", "topic": "Behind the scenes", "format": "Vlog", "duration": "6-10 min", "note": "Humanizes brand"},
                     ],
                 },
             ],
         },
     }
-    return stubs.get(suggestion_type, {"message": "Suggestion generated successfully.", "type": suggestion_type})
+    return stubs.get(suggestion_type, {"message": "Suggestion generated.", "type": suggestion_type})
