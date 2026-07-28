@@ -1,6 +1,6 @@
 """
-Social Pulse API — TrackedChannel Model
-YouTube-only competitor/niche channels for comparison.
+Social Pulse API — TrackedChannel Model (v2)
+Enhanced with: get_by_channel_id, video_count property.
 """
 from app.extensions import db
 from app.utils import utc_now
@@ -27,6 +27,21 @@ class TrackedChannel(db.Model):
         foreign_keys="Suggestion.tracked_channel_id",
     )
 
+    @classmethod
+    def get_by_channel_id(cls, channel_id: str):
+        return cls.query.filter_by(channel_id=channel_id).first()
+
+    @classmethod
+    def get_by_niche(cls, niche: str):
+        return cls.query.filter(cls.niche.ilike(f"%{niche}%")).all()
+
+    @property
+    def video_count(self) -> int:
+        return len(self.videos)
+
+    def __repr__(self):
+        return f"<TrackedChannel id={self.id} channel_id={self.channel_id}>"
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -35,5 +50,6 @@ class TrackedChannel(db.Model):
             "channel_id": self.channel_id,
             "channel_name": self.channel_name,
             "niche": self.niche,
+            "video_count": self.video_count,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
