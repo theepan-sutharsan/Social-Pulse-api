@@ -9,6 +9,7 @@ from app.routes import (
     suggestion_routes,
     alert_routes,
     dashboard_routes,
+    admin_user_routes,
 )
 
 
@@ -20,3 +21,4 @@ def register_blueprints(app):
     app.register_blueprint(suggestion_routes.bp)
     app.register_blueprint(alert_routes.bp)
     app.register_blueprint(dashboard_routes.bp)
+    app.register_blueprint(admin_user_routes.bp)
