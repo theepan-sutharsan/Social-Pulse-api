@@ -1,6 +1,6 @@
 """
-Social Pulse API — Video Model
-Fetched video/post records from connected accounts or tracked channels.
+Social Pulse API — Video Model (v2)
+Enhanced with: get_top_by_account(), get_recent(), to_dict_with_latest_metrics().
 """
 from app.extensions import db
 from app.utils import utc_now
@@ -47,6 +47,39 @@ class Video(db.Model):
         db.UniqueConstraint("platform", "external_id", name="uq_platform_external_id"),
     )
 
+    @classmethod
+    def get_top_by_account(cls, account_id: int, limit: int = 10):
+        """Get videos for an account ordered by latest metric views."""
+        from app.models.video_metric_model import VideoMetric
+        return (
+            cls.query
+            .filter_by(connected_account_id=account_id)
+            .order_by(cls.published_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+    @classmethod
+    def get_recent(cls, account_ids: list, limit: int = 20):
+        """Get most recently published videos for a list of accounts."""
+        return (
+            cls.query
+            .filter(cls.connected_account_id.in_(account_ids))
+            .order_by(cls.published_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def get_latest_metric(self):
+        """Return the most recent VideoMetric for this video."""
+        from app.models.video_metric_model import VideoMetric
+        return (
+            VideoMetric.query
+            .filter_by(video_id=self.id)
+            .order_by(VideoMetric.recorded_at.desc())
+            .first()
+        )
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -62,3 +95,18 @@ class Video(db.Model):
             "published_at": self.published_at.isoformat() if self.published_at else None,
             "fetched_at": self.fetched_at.isoformat() if self.fetched_at else None,
         }
+
+    def to_dict_with_metrics(self):
+        """Include latest metric data in the dict."""
+        d = self.to_dict()
+        m = self.get_latest_metric()
+        if m:
+            d.update({
+                "views": m.views,
+                "likes": m.likes,
+                "comments": m.comments,
+                "shares": m.shares,
+                "engagement_rate": m.engagement_rate,
+                "metric_recorded_at": m.recorded_at.isoformat() if m.recorded_at else None,
+            })
+        return d
