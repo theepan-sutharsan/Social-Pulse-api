@@ -1,5 +1,6 @@
 """
-Social Pulse API — User Model
+Social Pulse API — User Model (v2)
+Added: get_by_email helper, __repr__, and active_members class method.
 """
 from app.extensions import db
 from app.utils import utc_now
@@ -36,6 +37,27 @@ class User(db.Model):
 
     def check_password(self, plain_password: str) -> bool:
         return check_password_hash(self.password, plain_password)
+
+    @classmethod
+    def get_by_email(cls, email: str):
+        return cls.query.filter_by(email=email.strip().lower()).first()
+
+    @classmethod
+    def active_members(cls):
+        return cls.query.filter_by(role="member", is_active=True).all()
+
+    @classmethod
+    def active_admins(cls):
+        return cls.query.filter_by(role="admin", is_active=True).all()
+
+    def deactivate(self):
+        self.is_active = False
+
+    def activate(self):
+        self.is_active = True
+
+    def __repr__(self):
+        return f"<User id={self.id} email={self.email} role={self.role}>"
 
     def to_dict(self):
         return {
