@@ -71,19 +71,22 @@ def connect_youtube():
 def get_instagram_oauth_url():
     user = get_current_user()
     url = meta_client.get_instagram_oauth_url(state=str(user.id))
-    return jsonify({"oauth_url": url}), 200
+    is_mock = "mock" in url or not meta_client.is_valid_app_id(meta_client._cfg()["app_id"])
+    return jsonify({"oauth_url": url, "is_mock": is_mock}), 200
 
 
 def get_facebook_oauth_url():
     user = get_current_user()
     url = meta_client.get_facebook_oauth_url(state=str(user.id))
-    return jsonify({"oauth_url": url}), 200
+    is_mock = "mock" in url or not meta_client.is_valid_app_id(meta_client._cfg()["app_id"])
+    return jsonify({"oauth_url": url, "is_mock": is_mock}), 200
 
 
 def get_tiktok_oauth_url():
     user = get_current_user()
     url = tiktok_client.get_tiktok_oauth_url(state=str(user.id))
-    return jsonify({"oauth_url": url}), 200
+    is_mock = "mock" in url or not tiktok_client.is_valid_client_key(tiktok_client._cfg()["client_key"])
+    return jsonify({"oauth_url": url, "is_mock": is_mock}), 200
 
 
 def oauth_callback():
