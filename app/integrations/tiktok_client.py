@@ -84,7 +84,7 @@ def exchange_code_for_token(code: str) -> dict:
         }
 
 
-def get_user_videos(open_id: str, access_token: str, max_count: int = 20) -> list:
+def get_user_videos(open_id: str, access_token: str, max_count: int = 50) -> list:
     """Fetch TikTok videos for an authenticated user."""
     if access_token.startswith("stub") or not access_token:
         return _stub_tiktok_videos(open_id, max_count)
@@ -126,7 +126,7 @@ def get_user_videos(open_id: str, access_token: str, max_count: int = 20) -> lis
         return _stub_tiktok_videos(open_id, max_count)
 
 
-def _stub_tiktok_videos(open_id: str, limit: int) -> list:
+def _stub_tiktok_videos(open_id: str, limit: int = 50) -> list:
     return [
         {
             "external_id": f"tt_stub_{open_id[:6]}_{i}",
@@ -141,5 +141,5 @@ def _stub_tiktok_videos(open_id: str, limit: int) -> list:
             "comments": 200 + i * 20,
             "shares": 500 + i * 50,
         }
-        for i in range(min(limit, 8))
+        for i in range(limit)
     ]

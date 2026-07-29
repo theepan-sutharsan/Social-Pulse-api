@@ -22,6 +22,7 @@ def app():
         ANTHROPIC_API_KEY = ""
         YOUTUBE_API_KEY = ""
         GEMINI_API_KEY = ""
+        GOOGLE_API_KEY = ""
 
     application = create_app(TestConfig)
     with application.app_context():

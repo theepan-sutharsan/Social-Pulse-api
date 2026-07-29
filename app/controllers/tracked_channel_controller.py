@@ -105,7 +105,7 @@ def sync_tracked_channel(channel_id: int):
         return jsonify({"error": "Tracked channel not found."}), 404
 
     try:
-        raw_videos = youtube_client.get_channel_videos(channel.channel_id)
+        raw_videos = youtube_client.get_channel_videos(channel.channel_id, max_results=50)
         created = 0
         for rv in raw_videos:
             ext_id = rv.get("external_id", "")

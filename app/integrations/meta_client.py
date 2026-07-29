@@ -111,7 +111,7 @@ def exchange_code_for_token(code: str, platform: str) -> dict:
         }
 
 
-def get_instagram_posts(account_id: str, access_token: str, limit: int = 20) -> list:
+def get_instagram_posts(account_id: str, access_token: str, limit: int = 50) -> list:
     """Fetch Instagram posts for a business account."""
     if access_token.startswith("stub") or not access_token:
         return _stub_ig_posts(account_id, limit)
@@ -147,7 +147,7 @@ def get_instagram_posts(account_id: str, access_token: str, limit: int = 20) -> 
         return _stub_ig_posts(account_id, limit)
 
 
-def get_facebook_posts(account_id: str, access_token: str, limit: int = 20) -> list:
+def get_facebook_posts(account_id: str, access_token: str, limit: int = 50) -> list:
     """Fetch Facebook page posts."""
     if access_token.startswith("stub") or not access_token:
         return _stub_fb_posts(account_id, limit)
@@ -183,7 +183,7 @@ def get_facebook_posts(account_id: str, access_token: str, limit: int = 20) -> l
         return _stub_fb_posts(account_id, limit)
 
 
-def _stub_ig_posts(account_id: str, limit: int) -> list:
+def _stub_ig_posts(account_id: str, limit: int = 50) -> list:
     return [
         {
             "external_id": f"ig_stub_{account_id[:6]}_{i}",
@@ -198,11 +198,11 @@ def _stub_ig_posts(account_id: str, limit: int) -> list:
             "views": 15000 + i * 2000,
             "shares": 20 + i * 3,
         }
-        for i in range(min(limit, 8))
+        for i in range(limit)
     ]
 
 
-def _stub_fb_posts(account_id: str, limit: int) -> list:
+def _stub_fb_posts(account_id: str, limit: int = 50) -> list:
     return [
         {
             "external_id": f"fb_stub_{account_id[:6]}_{i}",
@@ -217,5 +217,5 @@ def _stub_fb_posts(account_id: str, limit: int) -> list:
             "views": 9500 + i * 1200,
             "shares": 15 + i * 2,
         }
-        for i in range(min(limit, 8))
+        for i in range(limit)
     ]
