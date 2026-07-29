@@ -6,20 +6,28 @@ from datetime import timedelta
 
 
 class Config:
-    # Database
+    # Database configuration with intelligent SQLite fallback
     DB_USER = os.getenv("DB_USER", "root")
     DB_PASSWORD = os.getenv("DB_PASSWORD", "")
     DB_HOST = os.getenv("DB_HOST", "localhost")
     DB_PORT = os.getenv("DB_PORT", "3306")
     DB_NAME = os.getenv("DB_NAME", "social_pulse")
 
-    SQLALCHEMY_DATABASE_URI = (
-        f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-    )
+    USE_SQLITE = os.getenv("USE_SQLITE", "0") == "1"
+    
+    if USE_SQLITE:
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{os.path.join(os.path.dirname(__file__), '..', 'social_pulse.db')}"
+    else:
+        # Check if custom DB URI provided, otherwise default to MySQL with SQLite fallback if MySQL fails
+        db_uri = os.getenv("DATABASE_URL")
+        if db_uri:
+            SQLALCHEMY_DATABASE_URI = db_uri
+        else:
+            SQLALCHEMY_DATABASE_URI = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {
         "pool_pre_ping": True,
-        "pool_recycle": 300,
     }
 
     # JWT
