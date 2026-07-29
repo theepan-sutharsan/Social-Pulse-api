@@ -60,7 +60,7 @@ class Video(db.Model):
         )
 
     @classmethod
-    def get_recent(cls, account_ids: list, limit: int = 20):
+    def get_recent(cls, account_ids: list, limit: int = 50):
         """Get most recently published videos for a list of accounts."""
         return (
             cls.query

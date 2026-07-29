@@ -76,7 +76,7 @@ def _stub_channel_info(channel_id: str) -> dict:
     }
 
 
-def _stub_videos(channel_id: str, max_results: int = 20) -> list:
+def _stub_videos(channel_id: str, max_results: int = 50) -> list:
     """Return mock video data when no API key is configured."""
     videos = []
     base_titles = [
@@ -90,15 +90,22 @@ def _stub_videos(channel_id: str, max_results: int = 20) -> list:
         "Docker & Kubernetes for Beginners",
         "Git Workflow for Teams",
         "TypeScript Tips You Didn't Know",
+        "System Design Masterclass",
+        "Microservices vs Monolith Architecture",
+        "PostgreSQL Optimization Guide",
+        "Tailwind CSS v4 Deep Dive",
+        "Building AI Agents with Python",
     ]
-    for i, t in enumerate(base_titles[:max_results]):
+    for i in range(max_results):
+        t = base_titles[i % len(base_titles)]
+        title = f"{t} (Part {i + 1})" if i >= len(base_titles) else t
         videos.append({
             "external_id": f"yt_stub_{channel_id[:6]}_{i}",
-            "title": t,
-            "description": f"A great video about {t.lower()}. Subscribe for more content!",
-            "tags": ["tutorial", "programming", "developer"],
-            "thumbnail_url": f"https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
-            "duration_seconds": 600 + i * 120,
+            "title": title,
+            "description": f"A detailed video guide on {title.lower()}. Subscribe for more!",
+            "tags": ["tutorial", "programming", "tech"],
+            "thumbnail_url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            "duration_seconds": 300 + (i * 45) % 1800,
             "published_at": f"2026-0{(i % 6) + 1}-{(i % 28) + 1:02d}T10:00:00",
         })
     return videos

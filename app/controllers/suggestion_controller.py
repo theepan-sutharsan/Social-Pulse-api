@@ -60,7 +60,7 @@ def generate_suggestion():
         account_name = channel.channel_name
         videos_q = Video.query.filter_by(tracked_channel_id=tracked_channel_id)
 
-    videos_raw = videos_q.order_by(Video.fetched_at.desc()).limit(30).all()
+    videos_raw = videos_q.order_by(Video.fetched_at.desc()).limit(50).all()
 
     # Enrich with latest metrics
     video_dicts = []

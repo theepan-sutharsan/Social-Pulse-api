@@ -172,18 +172,18 @@ def sync_account(account_id: int):
 
     try:
         if account.platform == "youtube":
-            raw_videos = youtube_client.get_channel_videos(account.platform_account_id)
+            raw_videos = youtube_client.get_channel_videos(account.platform_account_id, max_results=50)
         elif account.platform == "instagram":
             raw_videos = meta_client.get_instagram_posts(
-                account.platform_account_id, account.access_token or ""
+                account.platform_account_id, account.access_token or "", limit=50
             )
         elif account.platform == "facebook":
             raw_videos = meta_client.get_facebook_posts(
-                account.platform_account_id, account.access_token or ""
+                account.platform_account_id, account.access_token or "", limit=50
             )
         elif account.platform == "tiktok":
             raw_videos = tiktok_client.get_user_videos(
-                account.platform_account_id, account.access_token or ""
+                account.platform_account_id, account.access_token or "", max_count=50
             )
         else:
             raw_videos = []

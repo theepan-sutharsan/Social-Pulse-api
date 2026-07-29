@@ -43,8 +43,14 @@ def clean_db(app):
 
 def _register_admin(client):
     client.post("/api/auth/register", json={
-        "email": "admin@test.com", "password": "admin123", "full_name": "Admin", "role": "admin"
+        "email": "admin@test.com", "password": "admin123", "full_name": "Admin"
     })
+    from app.models.user_model import User
+    from app.extensions import db
+    user = User.query.filter_by(email="admin@test.com").first()
+    if user:
+        user.role = "admin"
+        db.session.commit()
     resp = client.post("/api/auth/login", json={"email": "admin@test.com", "password": "admin123"})
     return resp.get_json()["access_token"]
 
