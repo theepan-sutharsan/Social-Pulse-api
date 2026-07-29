@@ -16,8 +16,9 @@ from app.integrations import youtube_client, meta_client, tiktok_client
 
 def _validate_youtube_payload(data: dict) -> list:
     errors = []
-    if not data.get("channel_id", "").strip():
-        errors.append("channel_id is required.")
+    val = (data.get("channel_id") or data.get("handle") or data.get("url") or data.get("channel_input") or "").strip()
+    if not val:
+        errors.append("channel_id, handle (@name), or channel URL is required.")
     return errors
 
 
@@ -37,25 +38,29 @@ def connect_youtube():
     if errors:
         return jsonify({"errors": errors}), 400
 
-    channel_id = data["channel_id"].strip()
+    raw_input = (
+        data.get("channel_id") or data.get("handle") or data.get("url") or data.get("channel_input") or ""
+    ).strip()
+
+    # Fetch channel info (resolves handle, URL, or channel_id)
+    info = youtube_client.get_channel_info(raw_input)
+    if not info:
+        return jsonify({"error": "YouTube channel not found. Please check the channel ID, handle (@name), or URL."}), 404
+
+    canonical_channel_id = info.get("channel_id", raw_input)
 
     # Check for duplicate
     existing = ConnectedAccount.query.filter_by(
-        user_id=user.id, platform="youtube", platform_account_id=channel_id
+        user_id=user.id, platform="youtube", platform_account_id=canonical_channel_id
     ).first()
     if existing:
         return jsonify({"error": "This YouTube channel is already connected."}), 400
 
-    # Fetch channel info
-    info = youtube_client.get_channel_info(channel_id)
-    if not info:
-        return jsonify({"error": "YouTube channel not found. Please check the channel ID."}), 404
-
     account = ConnectedAccount(
         user_id=user.id,
         platform="youtube",
-        platform_account_id=channel_id,
-        display_name=info.get("display_name", channel_id),
+        platform_account_id=canonical_channel_id,
+        display_name=info.get("display_name", canonical_channel_id),
         created_at=utc_now(),
     )
     try:

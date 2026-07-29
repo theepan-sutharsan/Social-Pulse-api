@@ -5,6 +5,9 @@ API-key based, no OAuth required. Fetches public channel data and videos.
 from flask import current_app
 from datetime import datetime
 
+import re
+from urllib.parse import urlparse
+
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 
 
@@ -13,11 +16,60 @@ def _get_api_key() -> str:
     return key
 
 
+def parse_youtube_identifier(input_str: str) -> dict:
+    """
+    Parse a raw user input string (channel ID, handle, or full URL)
+    and return a dict with type ('id', 'handle', 'username') and clean value.
+    """
+    val = (input_str or "").strip()
+    if not val:
+        return {"type": "id", "value": ""}
+
+    # Parse URL if input starts with http://, https://, or youtube.com
+    if val.startswith(("http://", "https://", "www.youtube.com", "youtube.com")):
+        if not val.startswith(("http://", "https://")):
+            val = "https://" + val
+        parsed = urlparse(val)
+        path = parsed.path.strip("/")
+        
+        if path.startswith("@"):
+            return {"type": "handle", "value": path}
+        elif path.startswith("channel/"):
+            parts = path.split("/")
+            return {"type": "id", "value": parts[1] if len(parts) > 1 else path}
+        elif path.startswith("c/") or path.startswith("user/"):
+            parts = path.split("/")
+            clean = parts[1] if len(parts) > 1 else path
+            return {"type": "handle", "value": f"@{clean}" if not clean.startswith("@") else clean}
+        elif path:
+            clean = path.split("/")[0]
+            if clean.startswith("@"):
+                return {"type": "handle", "value": clean}
+            elif clean.startswith("UC"):
+                return {"type": "id", "value": clean}
+            else:
+                return {"type": "handle", "value": f"@{clean}"}
+
+    # Handle format starting with @
+    if val.startswith("@"):
+        return {"type": "handle", "value": val}
+
+    # Channel ID (Starts with UC)
+    if val.startswith("UC"):
+        return {"type": "id", "value": val}
+
+    # Default fallback
+    clean_handle = f"@{val}" if not val.startswith("@") else val
+    return {"type": "handle", "value": clean_handle}
+
+
 def _stub_channel_info(channel_id: str) -> dict:
     """Return mock channel data when no API key is configured."""
+    clean_id = channel_id if channel_id.startswith("UC") else f"UC_{channel_id.lstrip('@')[:18]}"
+    display_name = f"{channel_id}" if channel_id.startswith("@") else f"Channel ({channel_id[:8]}...)"
     return {
-        "channel_id": channel_id,
-        "display_name": f"Channel ({channel_id[:8]}...)",
+        "channel_id": clean_id,
+        "display_name": display_name,
         "subscriber_count": 10000,
         "video_count": 50,
         "thumbnail": "",
@@ -54,28 +106,51 @@ def _stub_videos(channel_id: str, max_results: int = 20) -> list:
 
 def get_channel_info(channel_id: str) -> dict:
     """
-    Fetch channel metadata for the given YouTube channel ID.
+    Fetch channel metadata for a YouTube channel ID, Handle (@handle), or URL.
     Falls back to stub data if no API key is set.
     """
     api_key = _get_api_key()
+    parsed = parse_youtube_identifier(channel_id)
+    target_type = parsed["type"]
+    clean_val = parsed["value"]
+
     if not api_key:
         current_app.logger.warning("YOUTUBE_API_KEY not set — using stub data.")
-        return _stub_channel_info(channel_id)
+        return _stub_channel_info(clean_val)
 
     try:
         import requests
         url = f"{YOUTUBE_API_BASE}/channels"
-        params = {
-            "part": "snippet,statistics",
-            "id": channel_id,
-            "key": api_key,
-        }
+        
+        if target_type == "id":
+            params = {"part": "snippet,statistics", "id": clean_val, "key": api_key}
+        elif target_type == "handle":
+            params = {"part": "snippet,statistics", "forHandle": clean_val, "key": api_key}
+        else:
+            params = {"part": "snippet,statistics", "forUsername": clean_val.lstrip("@"), "key": api_key}
+
         resp = requests.get(url, params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
         items = data.get("items", [])
+        
+        # Fallback query if forHandle failed without @
+        if not items and target_type == "handle" and clean_val.startswith("@"):
+            params["forHandle"] = clean_val.lstrip("@")
+            resp = requests.get(url, params=params, timeout=10)
+            if resp.status_code == 200:
+                items = resp.json().get("items", [])
+        
+        # Fallback query using forUsername
+        if not items and target_type == "handle":
+            params_username = {"part": "snippet,statistics", "forUsername": clean_val.lstrip("@"), "key": api_key}
+            resp = requests.get(url, params=params_username, timeout=10)
+            if resp.status_code == 200:
+                items = resp.json().get("items", [])
+
         if not items:
             return {}
+            
         item = items[0]
         snippet = item.get("snippet", {})
         stats = item.get("statistics", {})
@@ -88,7 +163,7 @@ def get_channel_info(channel_id: str) -> dict:
         }
     except Exception as e:
         current_app.logger.error(f"YouTube channel fetch error: {e}")
-        return _stub_channel_info(channel_id)
+        return _stub_channel_info(clean_val)
 
 
 def get_channel_videos(channel_id: str, max_results: int = 20) -> list:
