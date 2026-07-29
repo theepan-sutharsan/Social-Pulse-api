@@ -79,7 +79,10 @@ def generate_suggestion():
     provider = data.get("provider")
 
     # Call AI
-    output = ai_client.generate_suggestion(suggestion_type, video_dicts, account_name, provider=provider)
+    try:
+        output = ai_client.generate_suggestion(suggestion_type, video_dicts, account_name, provider=provider)
+    except ai_client.AIProviderError as e:
+        return jsonify({"error": str(e)}), 400
 
     # Build input context summary
     input_context = f"Account: {account_name} | Type: {suggestion_type} | Videos analyzed: {len(video_dicts)}"
