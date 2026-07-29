@@ -20,6 +20,8 @@ def app():
         SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
         JWT_SECRET_KEY = "test-secret-key"
         ANTHROPIC_API_KEY = ""
+        YOUTUBE_API_KEY = ""
+        GEMINI_API_KEY = ""
 
     application = create_app(TestConfig)
     with application.app_context():
@@ -142,3 +144,18 @@ def test_suggestion_not_found(client):
     token = _register_and_login(client)
     resp = client.get("/api/suggestions/99999", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 404
+
+
+def test_generate_suggestion_with_gemini_provider(client):
+    token = _register_and_login(client)
+    account_id = _create_account_and_sync(client, token)
+    resp = client.post(
+        "/api/suggestions",
+        json={"type": "title", "provider": "gemini", "connected_account_id": account_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 201
+    data = resp.get_json()
+    assert "suggestion" in data
+    assert data["suggestion"]["type"] == "title"
+    assert data["suggestion"]["output"] is not None
