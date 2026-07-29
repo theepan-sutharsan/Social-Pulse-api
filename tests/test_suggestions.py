@@ -89,7 +89,7 @@ def test_generate_suggestion_unconfigured_error(client):
     assert resp.status_code == 400
     data = resp.get_json()
     assert "error" in data
-    assert "GEMINI_API_KEY" in data["error"]
+    assert "GOOGLE_API_KEY" in data["error"]
 
 
 def test_generate_suggestion_invalid_type(client):

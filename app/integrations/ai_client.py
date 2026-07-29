@@ -104,7 +104,10 @@ class AIProviderError(Exception):
 
 def _generate_gemini_suggestion(prompt: str, api_key: str, suggestion_type: str, account_name: str) -> dict:
     import requests
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    base_url = current_app.config.get("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+    model = current_app.config.get("GEMINI_MODEL", "gemini-flash-latest")
+    
+    url = f"{base_url}/models/{model}:generateContent?key={api_key}"
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [
@@ -122,8 +125,8 @@ def _generate_gemini_suggestion(prompt: str, api_key: str, suggestion_type: str,
     
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=30)
-        if response.status_code != 200:
-            url_fallback = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+        if response.status_code != 200 and model != "gemini-1.5-flash":
+            url_fallback = f"{base_url}/models/gemini-1.5-flash:generateContent?key={api_key}"
             response = requests.post(url_fallback, headers=headers, json=payload, timeout=30)
         
         if response.status_code != 200:
@@ -170,7 +173,7 @@ def _generate_claude_suggestion(prompt: str, api_key: str, suggestion_type: str,
 
 
 def generate_suggestion(suggestion_type: str, videos: list, account_name: str = "", provider: str = None) -> dict:
-    gemini_key = current_app.config.get("GEMINI_API_KEY", "")
+    google_key = current_app.config.get("GOOGLE_API_KEY", "") or current_app.config.get("GEMINI_API_KEY", "")
     anthropic_key = current_app.config.get("ANTHROPIC_API_KEY", "")
     prompt = _build_prompt(suggestion_type, videos, account_name)
 
@@ -180,9 +183,9 @@ def generate_suggestion(suggestion_type: str, videos: list, account_name: str = 
         return _stub_suggestion(suggestion_type, account_name)
 
     if target_provider == "gemini":
-        if not gemini_key or gemini_key == "your-gemini-api-key":
-            raise AIProviderError("Google Gemini API key is not configured. Please set GEMINI_API_KEY in your api/.env file.")
-        return _generate_gemini_suggestion(prompt, gemini_key, suggestion_type, account_name)
+        if not google_key or google_key in ["your-google-api-key", "your-gemini-api-key"]:
+            raise AIProviderError("Google Gemini API key is not configured. Please set GOOGLE_API_KEY in your api/.env file.")
+        return _generate_gemini_suggestion(prompt, google_key, suggestion_type, account_name)
 
     if target_provider == "claude":
         if not anthropic_key or anthropic_key == "your-anthropic-api-key":
@@ -190,13 +193,13 @@ def generate_suggestion(suggestion_type: str, videos: list, account_name: str = 
         return _generate_claude_suggestion(prompt, anthropic_key, suggestion_type, account_name)
 
     # Auto provider resolution:
-    if gemini_key and gemini_key != "your-gemini-api-key":
-        return _generate_gemini_suggestion(prompt, gemini_key, suggestion_type, account_name)
+    if google_key and google_key not in ["your-google-api-key", "your-gemini-api-key"]:
+        return _generate_gemini_suggestion(prompt, google_key, suggestion_type, account_name)
 
     if anthropic_key and anthropic_key != "your-anthropic-api-key":
         return _generate_claude_suggestion(prompt, anthropic_key, suggestion_type, account_name)
 
-    raise AIProviderError("No valid AI Provider API key configured. Please set GEMINI_API_KEY or ANTHROPIC_API_KEY in your api/.env file.")
+    raise AIProviderError("No valid AI Provider API key configured. Please set GOOGLE_API_KEY or ANTHROPIC_API_KEY in your api/.env file.")
 
 
 def _stub_suggestion(suggestion_type: str, account_name: str = "") -> dict:

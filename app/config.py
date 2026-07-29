@@ -49,5 +49,8 @@ class Config:
     TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET", "")
     TIKTOK_REDIRECT_URI = os.getenv("TIKTOK_REDIRECT_URI", "http://localhost:5000/api/accounts/oauth-callback")
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
+    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY", "")
+    GEMINI_API_KEY = GOOGLE_API_KEY
+    GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
     ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
