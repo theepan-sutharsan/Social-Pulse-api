@@ -19,13 +19,15 @@ REQUIRED_CSV_COLUMNS = ["channel_id", "channel_name", "niche"]
 
 def _validate_tracked_channel_payload(data: dict, channel_id_to_exclude: str = None) -> list:
     errors = []
-    if not data.get("channel_id", "").strip():
-        errors.append("channel_id is required.")
-    if not data.get("channel_name", "").strip():
-        errors.append("channel_name is required.")
+    val = (data.get("channel_id") or data.get("handle") or data.get("url") or data.get("channel_input") or "").strip()
+    if not val:
+        errors.append("channel_id, handle (@name), or channel URL is required.")
+    
     # Check uniqueness
-    if data.get("channel_id"):
-        q = TrackedChannel.query.filter_by(channel_id=data["channel_id"].strip())
+    if val:
+        parsed = youtube_client.parse_youtube_identifier(val)
+        search_id = parsed["value"]
+        q = TrackedChannel.query.filter_by(channel_id=search_id)
         existing = q.first()
         if existing and existing.channel_id != channel_id_to_exclude:
             errors.append("This YouTube channel is already being tracked.")
@@ -44,16 +46,26 @@ def create_tracked_channel():
     if errors:
         return jsonify({"errors": errors}), 400
 
-    channel_id = data["channel_id"].strip()
-    # Enrich from YouTube API if possible
-    info = youtube_client.get_channel_info(channel_id)
-    display_name = info.get("display_name", data["channel_name"].strip()) if info else data["channel_name"].strip()
+    raw_input = (
+        data.get("channel_id") or data.get("handle") or data.get("url") or data.get("channel_input") or ""
+    ).strip()
+
+    # Enrich / resolve from YouTube API
+    info = youtube_client.get_channel_info(raw_input)
+    canonical_id = info.get("channel_id", raw_input) if info else raw_input
+    fallback_name = data.get("channel_name", "").strip() or raw_input
+    display_name = info.get("display_name", fallback_name) if info else fallback_name
+
+    # Double check uniqueness for canonical_id
+    existing = TrackedChannel.query.filter_by(channel_id=canonical_id).first()
+    if existing:
+        return jsonify({"error": "This YouTube channel is already being tracked."}), 400
 
     channel = TrackedChannel(
         added_by_id=user.id,
         platform="youtube",
-        channel_id=channel_id,
-        channel_name=display_name or data["channel_name"].strip(),
+        channel_id=canonical_id,
+        channel_name=display_name,
         niche=data.get("niche", "").strip() or None,
         created_at=utc_now(),
     )

@@ -97,6 +97,30 @@ def test_connect_youtube_duplicate(client):
     assert resp.status_code == 400
 
 
+def test_connect_youtube_handle(client):
+    token = _register_and_login(client)
+    resp = client.post(
+        "/api/accounts/youtube",
+        json={"channel_id": "@TechGuruPro"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 201
+    data = resp.get_json()
+    assert data["account"]["platform"] == "youtube"
+
+
+def test_connect_youtube_url(client):
+    token = _register_and_login(client)
+    resp = client.post(
+        "/api/accounts/youtube",
+        json={"url": "https://www.youtube.com/@TechGuruPro"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 201
+    data = resp.get_json()
+    assert data["account"]["platform"] == "youtube"
+
+
 def test_get_instagram_oauth_url(client):
     token = _register_and_login(client)
     resp = client.get(
