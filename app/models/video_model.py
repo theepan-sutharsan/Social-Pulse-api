@@ -80,8 +80,8 @@ class Video(db.Model):
             .first()
         )
 
-    def to_dict(self):
-        return {
+    def to_dict(self, include_metrics: bool = True):
+        d = {
             "id": self.id,
             "connected_account_id": self.connected_account_id,
             "tracked_channel_id": self.tracked_channel_id,
@@ -94,19 +94,25 @@ class Video(db.Model):
             "duration_seconds": self.duration_seconds,
             "published_at": self.published_at.isoformat() if self.published_at else None,
             "fetched_at": self.fetched_at.isoformat() if self.fetched_at else None,
+            "views": 0,
+            "likes": 0,
+            "comments": 0,
+            "shares": 0,
+            "engagement_rate": 0.0,
         }
+        if include_metrics:
+            m = self.get_latest_metric()
+            if m:
+                d.update({
+                    "views": m.views,
+                    "likes": m.likes,
+                    "comments": m.comments,
+                    "shares": m.shares,
+                    "engagement_rate": m.engagement_rate,
+                    "metric_recorded_at": m.recorded_at.isoformat() if m.recorded_at else None,
+                })
+        return d
 
     def to_dict_with_metrics(self):
         """Include latest metric data in the dict."""
-        d = self.to_dict()
-        m = self.get_latest_metric()
-        if m:
-            d.update({
-                "views": m.views,
-                "likes": m.likes,
-                "comments": m.comments,
-                "shares": m.shares,
-                "engagement_rate": m.engagement_rate,
-                "metric_recorded_at": m.recorded_at.isoformat() if m.recorded_at else None,
-            })
-        return d
+        return self.to_dict(include_metrics=True)
