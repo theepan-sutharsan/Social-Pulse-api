@@ -76,8 +76,10 @@ def generate_suggestion():
                         "comments": latest_m.comments, "shares": latest_m.shares})
         video_dicts.append(vd)
 
+    provider = data.get("provider")
+
     # Call AI
-    output = ai_client.generate_suggestion(suggestion_type, video_dicts, account_name)
+    output = ai_client.generate_suggestion(suggestion_type, video_dicts, account_name, provider=provider)
 
     # Build input context summary
     input_context = f"Account: {account_name} | Type: {suggestion_type} | Videos analyzed: {len(video_dicts)}"

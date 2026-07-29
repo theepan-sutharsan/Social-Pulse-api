@@ -97,34 +97,89 @@ def _build_prompt(suggestion_type: str, videos: list, account_name: str = "") ->
     return prompt
 
 
-def generate_suggestion(suggestion_type: str, videos: list, account_name: str = "") -> dict:
-    api_key = current_app.config.get("ANTHROPIC_API_KEY", "")
+def _generate_gemini_suggestion(prompt: str, api_key: str, suggestion_type: str, account_name: str) -> dict:
+    import requests
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt}
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.7,
+            "responseMimeType": "application/json"
+        }
+    }
+    
+    response = requests.post(url, headers=headers, json=payload, timeout=30)
+    if response.status_code != 200:
+        url_fallback = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+        response = requests.post(url_fallback, headers=headers, json=payload, timeout=30)
+    
+    response.raise_for_status()
+    res_data = response.json()
+    raw_text = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    
+    try:
+        return json.loads(raw_text)
+    except json.JSONDecodeError:
+        import re
+        match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        return {"raw": raw_text}
+
+
+def _generate_claude_suggestion(prompt: str, api_key: str, suggestion_type: str, account_name: str) -> dict:
+    import anthropic
+    client = anthropic.Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model="claude-3-5-sonnet-20241022",
+        max_tokens=2048,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    raw_text = message.content[0].text.strip()
+    try:
+        return json.loads(raw_text)
+    except json.JSONDecodeError:
+        import re
+        match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        return {"raw": raw_text}
+
+
+def generate_suggestion(suggestion_type: str, videos: list, account_name: str = "", provider: str = None) -> dict:
+    gemini_key = current_app.config.get("GEMINI_API_KEY", "")
+    anthropic_key = current_app.config.get("ANTHROPIC_API_KEY", "")
     prompt = _build_prompt(suggestion_type, videos, account_name)
 
-    if not api_key:
-        current_app.logger.warning("ANTHROPIC_API_KEY not set — using stub suggestion.")
-        return _stub_suggestion(suggestion_type, account_name)
+    target_provider = (provider or "").lower()
 
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=2048,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        raw_text = message.content[0].text.strip()
-        try:
-            return json.loads(raw_text)
-        except json.JSONDecodeError:
-            import re
-            match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-            if match:
-                return json.loads(match.group())
-            return {"raw": raw_text}
-    except Exception as e:
-        current_app.logger.error(f"Claude API error: {e}")
-        return _stub_suggestion(suggestion_type, account_name)
+    if target_provider == "gemini" or (not target_provider and gemini_key and gemini_key != "your-gemini-api-key"):
+        if gemini_key and gemini_key != "your-gemini-api-key":
+            try:
+                return _generate_gemini_suggestion(prompt, gemini_key, suggestion_type, account_name)
+            except Exception as e:
+                current_app.logger.error(f"Gemini API error: {e}")
+        else:
+            current_app.logger.warning("GEMINI_API_KEY not set or template string.")
+
+    if target_provider == "claude" or (not target_provider and anthropic_key and anthropic_key != "your-anthropic-api-key"):
+        if anthropic_key and anthropic_key != "your-anthropic-api-key":
+            try:
+                return _generate_claude_suggestion(prompt, anthropic_key, suggestion_type, account_name)
+            except Exception as e:
+                current_app.logger.error(f"Claude API error: {e}")
+        else:
+            current_app.logger.warning("ANTHROPIC_API_KEY not set or template string.")
+
+    current_app.logger.warning("No valid AI provider configured or API calls failed — using stub suggestion.")
+    return _stub_suggestion(suggestion_type, account_name)
 
 
 def _stub_suggestion(suggestion_type: str, account_name: str = "") -> dict:
