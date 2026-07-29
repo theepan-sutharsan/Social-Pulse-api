@@ -97,6 +97,11 @@ def _build_prompt(suggestion_type: str, videos: list, account_name: str = "") ->
     return prompt
 
 
+class AIProviderError(Exception):
+    """Custom exception raised when AI provider generation fails or keys are unconfigured."""
+    pass
+
+
 def _generate_gemini_suggestion(prompt: str, api_key: str, suggestion_type: str, account_name: str) -> dict:
     import requests
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
@@ -115,42 +120,53 @@ def _generate_gemini_suggestion(prompt: str, api_key: str, suggestion_type: str,
         }
     }
     
-    response = requests.post(url, headers=headers, json=payload, timeout=30)
-    if response.status_code != 200:
-        url_fallback = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-        response = requests.post(url_fallback, headers=headers, json=payload, timeout=30)
-    
-    response.raise_for_status()
-    res_data = response.json()
-    raw_text = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
-    
     try:
-        return json.loads(raw_text)
-    except json.JSONDecodeError:
-        import re
-        match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-        if match:
-            return json.loads(match.group())
-        return {"raw": raw_text}
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        if response.status_code != 200:
+            url_fallback = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+            response = requests.post(url_fallback, headers=headers, json=payload, timeout=30)
+        
+        if response.status_code != 200:
+            err_detail = response.json().get("error", {}).get("message", response.text)
+            raise AIProviderError(f"Google Gemini API error ({response.status_code}): {err_detail}")
+        
+        res_data = response.json()
+        raw_text = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        
+        try:
+            return json.loads(raw_text)
+        except json.JSONDecodeError:
+            import re
+            match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+            if match:
+                return json.loads(match.group())
+            return {"raw": raw_text}
+    except AIProviderError:
+        raise
+    except Exception as e:
+        raise AIProviderError(f"Google Gemini API request failed: {str(e)}")
 
 
 def _generate_claude_suggestion(prompt: str, api_key: str, suggestion_type: str, account_name: str) -> dict:
-    import anthropic
-    client = anthropic.Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model="claude-3-5-sonnet-20241022",
-        max_tokens=2048,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    raw_text = message.content[0].text.strip()
     try:
-        return json.loads(raw_text)
-    except json.JSONDecodeError:
-        import re
-        match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-        if match:
-            return json.loads(match.group())
-        return {"raw": raw_text}
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        message = client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw_text = message.content[0].text.strip()
+        try:
+            return json.loads(raw_text)
+        except json.JSONDecodeError:
+            import re
+            match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+            if match:
+                return json.loads(match.group())
+            return {"raw": raw_text}
+    except Exception as e:
+        raise AIProviderError(f"Anthropic Claude API request failed: {str(e)}")
 
 
 def generate_suggestion(suggestion_type: str, videos: list, account_name: str = "", provider: str = None) -> dict:
@@ -160,26 +176,27 @@ def generate_suggestion(suggestion_type: str, videos: list, account_name: str = 
 
     target_provider = (provider or "").lower()
 
-    if target_provider == "gemini" or (not target_provider and gemini_key and gemini_key != "your-gemini-api-key"):
-        if gemini_key and gemini_key != "your-gemini-api-key":
-            try:
-                return _generate_gemini_suggestion(prompt, gemini_key, suggestion_type, account_name)
-            except Exception as e:
-                current_app.logger.error(f"Gemini API error: {e}")
-        else:
-            current_app.logger.warning("GEMINI_API_KEY not set or template string.")
+    if target_provider == "stub":
+        return _stub_suggestion(suggestion_type, account_name)
 
-    if target_provider == "claude" or (not target_provider and anthropic_key and anthropic_key != "your-anthropic-api-key"):
-        if anthropic_key and anthropic_key != "your-anthropic-api-key":
-            try:
-                return _generate_claude_suggestion(prompt, anthropic_key, suggestion_type, account_name)
-            except Exception as e:
-                current_app.logger.error(f"Claude API error: {e}")
-        else:
-            current_app.logger.warning("ANTHROPIC_API_KEY not set or template string.")
+    if target_provider == "gemini":
+        if not gemini_key or gemini_key == "your-gemini-api-key":
+            raise AIProviderError("Google Gemini API key is not configured. Please set GEMINI_API_KEY in your api/.env file.")
+        return _generate_gemini_suggestion(prompt, gemini_key, suggestion_type, account_name)
 
-    current_app.logger.warning("No valid AI provider configured or API calls failed — using stub suggestion.")
-    return _stub_suggestion(suggestion_type, account_name)
+    if target_provider == "claude":
+        if not anthropic_key or anthropic_key == "your-anthropic-api-key":
+            raise AIProviderError("Anthropic Claude API key is not configured. Please set ANTHROPIC_API_KEY in your api/.env file.")
+        return _generate_claude_suggestion(prompt, anthropic_key, suggestion_type, account_name)
+
+    # Auto provider resolution:
+    if gemini_key and gemini_key != "your-gemini-api-key":
+        return _generate_gemini_suggestion(prompt, gemini_key, suggestion_type, account_name)
+
+    if anthropic_key and anthropic_key != "your-anthropic-api-key":
+        return _generate_claude_suggestion(prompt, anthropic_key, suggestion_type, account_name)
+
+    raise AIProviderError("No valid AI Provider API key configured. Please set GEMINI_API_KEY or ANTHROPIC_API_KEY in your api/.env file.")
 
 
 def _stub_suggestion(suggestion_type: str, account_name: str = "") -> dict:

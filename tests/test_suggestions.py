@@ -68,7 +68,7 @@ def test_generate_suggestion_stub(client):
     account_id = _create_account_and_sync(client, token)
     resp = client.post(
         "/api/suggestions",
-        json={"type": "title", "connected_account_id": account_id},
+        json={"type": "title", "provider": "stub", "connected_account_id": account_id},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 201
@@ -78,12 +78,26 @@ def test_generate_suggestion_stub(client):
     assert data["suggestion"]["output"] is not None
 
 
+def test_generate_suggestion_unconfigured_error(client):
+    token = _register_and_login(client)
+    account_id = _create_account_and_sync(client, token)
+    resp = client.post(
+        "/api/suggestions",
+        json={"type": "title", "provider": "gemini", "connected_account_id": account_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert "error" in data
+    assert "GEMINI_API_KEY" in data["error"]
+
+
 def test_generate_suggestion_invalid_type(client):
     token = _register_and_login(client)
     account_id = _create_account_and_sync(client, token)
     resp = client.post(
         "/api/suggestions",
-        json={"type": "invalid_type", "connected_account_id": account_id},
+        json={"type": "invalid_type", "provider": "stub", "connected_account_id": account_id},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 400
@@ -93,7 +107,7 @@ def test_generate_suggestion_no_target(client):
     token = _register_and_login(client)
     resp = client.post(
         "/api/suggestions",
-        json={"type": "title"},
+        json={"type": "title", "provider": "stub"},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 400
@@ -112,7 +126,7 @@ def test_get_suggestion_with_sources(client):
     account_id = _create_account_and_sync(client, token)
     gen_resp = client.post(
         "/api/suggestions",
-        json={"type": "hook", "connected_account_id": account_id},
+        json={"type": "hook", "provider": "stub", "connected_account_id": account_id},
         headers={"Authorization": f"Bearer {token}"},
     )
     suggestion_id = gen_resp.get_json()["suggestion"]["id"]
@@ -129,7 +143,7 @@ def test_delete_suggestion(client):
     account_id = _create_account_and_sync(client, token)
     gen_resp = client.post(
         "/api/suggestions",
-        json={"type": "caption", "connected_account_id": account_id},
+        json={"type": "caption", "provider": "stub", "connected_account_id": account_id},
         headers={"Authorization": f"Bearer {token}"},
     )
     suggestion_id = gen_resp.get_json()["suggestion"]["id"]
@@ -144,18 +158,3 @@ def test_suggestion_not_found(client):
     token = _register_and_login(client)
     resp = client.get("/api/suggestions/99999", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 404
-
-
-def test_generate_suggestion_with_gemini_provider(client):
-    token = _register_and_login(client)
-    account_id = _create_account_and_sync(client, token)
-    resp = client.post(
-        "/api/suggestions",
-        json={"type": "title", "provider": "gemini", "connected_account_id": account_id},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert resp.status_code == 201
-    data = resp.get_json()
-    assert "suggestion" in data
-    assert data["suggestion"]["type"] == "title"
-    assert data["suggestion"]["output"] is not None
