@@ -39,81 +39,8 @@ def get_tracked_channels():
     return jsonify({"tracked_channels": [c.to_dict() for c in channels]}), 200
 
 
-def create_tracked_channel():
-    user = get_current_user()
-    data = request.get_json(silent=True) or {}
-    errors = _validate_tracked_channel_payload(data)
-    if errors:
-        return jsonify({"errors": errors}), 400
-
-    raw_input = (
-        data.get("channel_id") or data.get("handle") or data.get("url") or data.get("channel_input") or ""
-    ).strip()
-
-    # Enrich / resolve from YouTube API
-    info = youtube_client.get_channel_info(raw_input)
-    canonical_id = info.get("channel_id", raw_input) if info else raw_input
-    fallback_name = data.get("channel_name", "").strip() or raw_input
-    display_name = info.get("display_name", fallback_name) if info else fallback_name
-
-    existing = TrackedChannel.query.filter_by(channel_id=canonical_id).first()
-    if existing:
-        return jsonify({"error": "This YouTube channel is already being tracked."}), 400
-
-    channel = TrackedChannel(
-        added_by_id=user.id,
-        platform="youtube",
-        channel_id=canonical_id,
-        channel_name=display_name,
-        description=info.get("description") if info else None,
-        subscriber_count=info.get("subscriber_count", 0) if info else 0,
-        total_views=info.get("total_views", 0) if info else 0,
-        total_videos_count=info.get("video_count", 0) if info else 0,
-        profile_image=info.get("thumbnail") if info else None,
-        country=info.get("country") if info else None,
-        niche=data.get("niche", "").strip() or None,
-        created_at=utc_now(),
-    )
+def _sync_channel_internal(channel):
     try:
-        db.session.add(channel)
-        db.session.commit()
-
-        # Trigger immediate sync & snapshot
-        sync_tracked_channel(channel.id)
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"error": f"Failed to create tracked channel: {str(e)}"}), 500
-
-    return jsonify({"message": "Tracked channel added and synchronized.", "tracked_channel": channel.to_dict()}), 201
-
-
-def get_tracked_channel(channel_id: int):
-    channel = TrackedChannel.query.get(channel_id)
-    if not channel:
-        return jsonify({"error": "Tracked channel not found."}), 404
-    return jsonify({"tracked_channel": channel.to_dict()}), 200
-
-
-def delete_tracked_channel(channel_id: int):
-    channel = TrackedChannel.query.get(channel_id)
-    if not channel:
-        return jsonify({"error": "Tracked channel not found."}), 404
-    try:
-        db.session.delete(channel)
-        db.session.commit()
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"error": f"Delete failed: {str(e)}"}), 500
-    return jsonify({"message": "Tracked channel removed."}), 200
-
-
-def sync_tracked_channel(channel_id: int):
-    channel = TrackedChannel.query.get(channel_id)
-    if not channel:
-        return jsonify({"error": "Tracked channel not found."}), 404
-
-    try:
-        # Update channel stats from API
         info = youtube_client.get_channel_info(channel.channel_id)
         if info:
             channel.subscriber_count = info.get("subscriber_count", channel.subscriber_count or 0)
@@ -126,7 +53,6 @@ def sync_tracked_channel(channel_id: int):
         from app.models.channel_history_model import ChannelHistory
         from app.models.video_history_model import VideoHistory
 
-        # Initial ChannelHistory
         ch_snap = ChannelHistory(
             channel_id=channel.channel_id,
             subscribers=channel.subscriber_count or 0,
@@ -177,7 +103,6 @@ def sync_tracked_channel(channel_id: int):
                 db.session.flush()
                 created += 1
 
-            # Metric snapshot
             views = rv.get("views", 0) or 0
             likes = rv.get("likes", 0) or 0
             comments = rv.get("comments", 0) or 0
@@ -190,7 +115,6 @@ def sync_tracked_channel(channel_id: int):
             )
             db.session.add(metric)
 
-            # VideoHistory record
             v_hist = VideoHistory(
                 video_id=video.id,
                 external_id=ext_id,
@@ -200,14 +124,93 @@ def sync_tracked_channel(channel_id: int):
             db.session.add(v_hist)
 
         db.session.commit()
-        return jsonify({
-            "message": "Sync complete.",
-            "videos_fetched": len(raw_videos),
-            "new_videos": created,
-        }), 200
+        return len(raw_videos), created
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": f"Sync failed: {str(e)}"}), 500
+        return 0, 0
+
+
+def create_tracked_channel():
+    user = get_current_user()
+    data = request.get_json(silent=True) or {}
+    errors = _validate_tracked_channel_payload(data)
+    if errors:
+        return jsonify({"errors": errors, "error": errors[0]}), 400
+
+    raw_input = (
+        data.get("channel_id") or data.get("handle") or data.get("url") or data.get("channel_input") or ""
+    ).strip()
+
+    # Enrich / resolve from YouTube API
+    info = youtube_client.get_channel_info(raw_input)
+    canonical_id = info.get("channel_id", raw_input) if info else raw_input
+    fallback_name = data.get("channel_name", "").strip() or raw_input
+    display_name = info.get("display_name", fallback_name) if info else fallback_name
+
+    existing = TrackedChannel.query.filter_by(channel_id=canonical_id).first()
+    if existing:
+        return jsonify({"error": "This YouTube channel is already being tracked."}), 400
+
+    user_id = user.id if user else 1
+
+    channel = TrackedChannel(
+        added_by_id=user_id,
+        platform="youtube",
+        channel_id=canonical_id,
+        channel_name=display_name,
+        description=info.get("description") if info else None,
+        subscriber_count=info.get("subscriber_count", 0) if info else 0,
+        total_views=info.get("total_views", 0) if info else 0,
+        total_videos_count=info.get("video_count", 0) if info else 0,
+        profile_image=info.get("thumbnail") if info else None,
+        country=info.get("country") if info else None,
+        niche=data.get("niche", "").strip() or None,
+        created_at=utc_now(),
+    )
+    try:
+        db.session.add(channel)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"Failed to create tracked channel: {str(e)}"}), 500
+
+    # Perform initial sync
+    _sync_channel_internal(channel)
+
+    return jsonify({"message": "Tracked channel added and synchronized.", "tracked_channel": channel.to_dict()}), 201
+
+
+def get_tracked_channel(channel_id: int):
+    channel = TrackedChannel.query.get(channel_id)
+    if not channel:
+        return jsonify({"error": "Tracked channel not found."}), 404
+    return jsonify({"tracked_channel": channel.to_dict()}), 200
+
+
+def delete_tracked_channel(channel_id: int):
+    channel = TrackedChannel.query.get(channel_id)
+    if not channel:
+        return jsonify({"error": "Tracked channel not found."}), 404
+    try:
+        db.session.delete(channel)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"Delete failed: {str(e)}"}), 500
+    return jsonify({"message": "Tracked channel removed."}), 200
+
+
+def sync_tracked_channel(channel_id: int):
+    channel = TrackedChannel.query.get(channel_id)
+    if not channel:
+        return jsonify({"error": "Tracked channel not found."}), 404
+
+    fetched, created = _sync_channel_internal(channel)
+    return jsonify({
+        "message": "Sync complete.",
+        "videos_fetched": fetched,
+        "new_videos": created,
+    }), 200
 
 
 def export_tracked_channels(fmt: str = "csv"):
