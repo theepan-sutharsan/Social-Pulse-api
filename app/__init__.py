@@ -1,6 +1,7 @@
 """
 Social Pulse API — Application Factory
 """
+import os
 from flask import Flask, jsonify
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from dotenv import load_dotenv
@@ -31,7 +32,7 @@ def create_app(config_class=Config):
     from app.routes import register_blueprints
     register_blueprints(app)
 
-    # Create tables
+    # Create tables with automatic SQLite fallback
     with app.app_context():
         # Import all models so SQLAlchemy sees them
         from app.models import (  # noqa: F401
@@ -47,8 +48,12 @@ def create_app(config_class=Config):
         )
         try:
             db.create_all()
-        except (OperationalError, ProgrammingError) as e:
-            app.logger.error(f"Database error during create_all: {e}")
+        except (OperationalError, ProgrammingError, Exception) as e:
+            app.logger.warning(f"MySQL connection failed ({e}) — falling back to SQLite.")
+            db_path = os.path.join(os.path.dirname(__file__), '..', 'social_pulse.db')
+            app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path}"
+            db.engine.dispose()
+            db.create_all()
 
     # Global error handlers
     @app.errorhandler(OperationalError)

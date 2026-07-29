@@ -171,9 +171,9 @@ TRACKED_CHANNEL_VIDEOS = [
 
 def seed():
     with app.app_context():
-        print("🌱 Seeding Social Pulse database...")
+        print("[SEED] Seeding Social Pulse database...")
 
-        # ── Users ──────────────────────────────────────────────────
+        # -- Users --------------------------------------------------
         admin_user = User.query.filter_by(email="admin@socialpulse.test").first()
         if not admin_user:
             admin_user = User(
@@ -185,9 +185,9 @@ def seed():
             )
             admin_user.set_password("Admin123")
             db.session.add(admin_user)
-            print("  ✅ Created admin: admin@socialpulse.test / Admin123")
+            print("  [OK] Created admin: admin@socialpulse.test / Admin123")
         else:
-            print("  ⏩ Admin user already exists.")
+            print("  [SKIP] Admin user already exists.")
 
         member_user = User.query.filter_by(email="creator@socialpulse.test").first()
         if not member_user:
@@ -200,13 +200,13 @@ def seed():
             )
             member_user.set_password("Member123")
             db.session.add(member_user)
-            print("  ✅ Created member: creator@socialpulse.test / Member123")
+            print("  [OK] Created member: creator@socialpulse.test / Member123")
         else:
-            print("  ⏩ Member user already exists.")
+            print("  [SKIP] Member user already exists.")
 
         db.session.flush()
 
-        # ── Connected Account ──────────────────────────────────────
+        # -- Connected Account --------------------------------------
         account = ConnectedAccount.query.filter_by(
             user_id=member_user.id, platform="youtube", platform_account_id="UCVHFbw7woebKtX37QMs4Cng"
         ).first()
@@ -215,17 +215,17 @@ def seed():
                 user_id=member_user.id,
                 platform="youtube",
                 platform_account_id="UCVHFbw7woebKtX37QMs4Cng",
-                display_name="Alex Creator — Dev Channel",
+                display_name="Alex Creator - Dev Channel",
                 last_synced_at=utc_now() - timedelta(hours=2),
                 created_at=utc_now() - timedelta(days=100),
             )
             db.session.add(account)
             db.session.flush()
-            print("  ✅ Created connected account: YouTube Dev Channel")
+            print("  [OK] Created connected account: YouTube Dev Channel")
         else:
-            print("  ⏩ Connected account already exists.")
+            print("  [SKIP] Connected account already exists.")
 
-        # ── Tracked Channels ───────────────────────────────────────
+        # -- Tracked Channels ---------------------------------------
         tc1 = TrackedChannel.query.filter_by(channel_id="UC-competitor-tech-001").first()
         if not tc1:
             tc1 = TrackedChannel(
@@ -237,9 +237,9 @@ def seed():
                 created_at=utc_now() - timedelta(days=60),
             )
             db.session.add(tc1)
-            print("  ✅ Created tracked channel: TechGuru Pro")
+            print("  [OK] Created tracked channel: TechGuru Pro")
         else:
-            print("  ⏩ Tracked channel 1 already exists.")
+            print("  [SKIP] Tracked channel 1 already exists.")
 
         tc2 = TrackedChannel.query.filter_by(channel_id="UC-competitor-creator-002").first()
         if not tc2:
@@ -252,13 +252,13 @@ def seed():
                 created_at=utc_now() - timedelta(days=45),
             )
             db.session.add(tc2)
-            print("  ✅ Created tracked channel: CreatorPulse Academy")
+            print("  [OK] Created tracked channel: CreatorPulse Academy")
         else:
-            print("  ⏩ Tracked channel 2 already exists.")
+            print("  [SKIP] Tracked channel 2 already exists.")
 
         db.session.flush()
 
-        # ── Seed Videos + Metrics for Connected Account ───────────
+        # -- Seed Videos + Metrics for Connected Account -----------
         seeded_videos = []
         now = utc_now()
         for v_data in SEED_VIDEOS:
@@ -296,9 +296,9 @@ def seed():
                 )
                 db.session.add(metric)
 
-        print(f"  ✅ Seeded {len(SEED_VIDEOS)} videos with metrics for connected account")
+        print(f"  [OK] Seeded {len(SEED_VIDEOS)} videos with metrics for connected account")
 
-        # ── Seed Videos for Tracked Channels ──────────────────────
+        # -- Seed Videos for Tracked Channels ----------------------
         tc_channels = [tc1, tc2]
         for idx, tv_data in enumerate(TRACKED_CHANNEL_VIDEOS):
             tc = tc_channels[0] if idx < 2 else tc_channels[1]
@@ -327,22 +327,22 @@ def seed():
                     recorded_at=now - timedelta(days=m["days_ago"]),
                 )
                 db.session.add(metric)
-        print("  ✅ Seeded tracked channel videos with metrics")
+        print("  [OK] Seeded tracked channel videos with metrics")
 
-        # ── Seed Suggestion + SuggestionSources (SIGNATURE) ───────
+        # -- Seed Suggestion + SuggestionSources (SIGNATURE) -------
         existing_suggestion = Suggestion.query.filter_by(user_id=member_user.id, type="title").first()
         if not existing_suggestion:
             suggestion = Suggestion(
                 user_id=member_user.id,
                 connected_account_id=account.id,
                 type="title",
-                input_context=f"Account: Alex Creator — Dev Channel | Type: title | Videos analyzed: {len(seeded_videos)}",
+                input_context=f"Account: Alex Creator - Dev Channel | Type: title | Videos analyzed: {len(seeded_videos)}",
                 output={
                     "titles": [
                         "How I Grew to 100K Subscribers Using Data (Not Luck)",
                         "The Developer's Guide to Content That Actually Gets Views",
                         "Stop Guessing: Build Your YouTube Strategy Like an Engineer",
-                        "I Analyzed 500 Viral Dev Videos — Here's What They Share",
+                        "I Analyzed 500 Viral Dev Videos - Here's What They Share",
                         "Your Content Is Good. Here's Why Nobody's Watching (Fix This)",
                     ],
                     "reasoning": "Titles use curiosity gaps, social proof, and programmer-specific framing for maximum CTR in the developer niche.",
@@ -360,16 +360,16 @@ def seed():
                     created_at=utc_now() - timedelta(hours=12),
                 )
                 db.session.add(source)
-            print("  ✅ Created seeded suggestion with 4 source video links (signature many-to-many)")
+            print("  [OK] Created seeded suggestion with 4 source video links (signature many-to-many)")
         else:
-            print("  ⏩ Seeded suggestion already exists.")
+            print("  [SKIP] Seeded suggestion already exists.")
 
-        # ── Commit everything ──────────────────────────────────────
+        # -- Commit everything --------------------------------------
         db.session.commit()
-        print("\n🎉 Seed complete! Social Pulse is ready for the viva demo.")
+        print("\n[DONE] Seed complete! Social Pulse is ready for the viva demo.")
         print("\nDemo credentials:")
-        print("  Admin  → admin@socialpulse.test  / Admin123")
-        print("  Member → creator@socialpulse.test / Member123")
+        print("  Admin  -> admin@socialpulse.test  / Admin123")
+        print("  Member -> creator@socialpulse.test / Member123")
 
 
 if __name__ == "__main__":
