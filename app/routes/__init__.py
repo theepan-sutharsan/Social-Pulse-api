@@ -1,21 +1,24 @@
 """
 Social Pulse API — Blueprint Registration
 """
-from app.routes import (
-    auth_routes,
-    account_routes,
-    tracked_channel_routes,
-    video_routes,
-    suggestion_routes,
-    alert_routes,
-    dashboard_routes,
-    admin_user_routes,
-    analytics_routes,
-    health_routes,
-)
 
 
 def register_blueprints(app):
+    from app.routes import (
+        auth_routes,
+        account_routes,
+        tracked_channel_routes,
+        video_routes,
+        suggestion_routes,
+        alert_routes,
+        dashboard_routes,
+        admin_user_routes,
+        analytics_routes,
+        health_routes,
+        channel_analytics_routes,
+        video_analytics_routes,
+        multiplatform_analytics_routes,
+    )
     app.register_blueprint(auth_routes.bp)
     app.register_blueprint(account_routes.bp)
     app.register_blueprint(tracked_channel_routes.bp)
@@ -26,3 +29,8 @@ def register_blueprints(app):
     app.register_blueprint(admin_user_routes.bp)
     app.register_blueprint(analytics_routes.bp)
     app.register_blueprint(health_routes.bp)
+    app.register_blueprint(channel_analytics_routes.bp)
+    app.register_blueprint(video_analytics_routes.bp)
+    app.register_blueprint(multiplatform_analytics_routes.bp_accounts)
+    app.register_blueprint(multiplatform_analytics_routes.bp_competitors)
+    app.register_blueprint(multiplatform_analytics_routes.bp_posts)

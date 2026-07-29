@@ -23,3 +23,14 @@ def roles_required(*roles):
             return fn(*args, **kwargs)
         return wrapper
     return decorator
+
+
+def jwt_or_api_key_required(fn):
+    """
+    Decorator verifying either JWT token or API Key header.
+    """
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        verify_jwt_in_request()
+        return fn(*args, **kwargs)
+    return wrapper
