@@ -56,7 +56,6 @@ def create_tracked_channel():
     fallback_name = data.get("channel_name", "").strip() or raw_input
     display_name = info.get("display_name", fallback_name) if info else fallback_name
 
-    # Double check uniqueness for canonical_id
     existing = TrackedChannel.query.filter_by(channel_id=canonical_id).first()
     if existing:
         return jsonify({"error": "This YouTube channel is already being tracked."}), 400
@@ -66,17 +65,26 @@ def create_tracked_channel():
         platform="youtube",
         channel_id=canonical_id,
         channel_name=display_name,
+        description=info.get("description") if info else None,
+        subscriber_count=info.get("subscriber_count", 0) if info else 0,
+        total_views=info.get("total_views", 0) if info else 0,
+        total_videos_count=info.get("video_count", 0) if info else 0,
+        profile_image=info.get("thumbnail") if info else None,
+        country=info.get("country") if info else None,
         niche=data.get("niche", "").strip() or None,
         created_at=utc_now(),
     )
     try:
         db.session.add(channel)
         db.session.commit()
+
+        # Trigger immediate sync & snapshot
+        sync_tracked_channel(channel.id)
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": f"Failed to create tracked channel: {str(e)}"}), 500
 
-    return jsonify({"message": "Tracked channel added.", "tracked_channel": channel.to_dict()}), 201
+    return jsonify({"message": "Tracked channel added and synchronized.", "tracked_channel": channel.to_dict()}), 201
 
 
 def get_tracked_channel(channel_id: int):
@@ -105,20 +113,51 @@ def sync_tracked_channel(channel_id: int):
         return jsonify({"error": "Tracked channel not found."}), 404
 
     try:
+        # Update channel stats from API
+        info = youtube_client.get_channel_info(channel.channel_id)
+        if info:
+            channel.subscriber_count = info.get("subscriber_count", channel.subscriber_count or 0)
+            channel.total_views = info.get("total_views", channel.total_views or 0)
+            if info.get("video_count"):
+                channel.total_videos_count = info.get("video_count")
+            if info.get("thumbnail"):
+                channel.profile_image = info.get("thumbnail")
+
+        from app.models.channel_history_model import ChannelHistory
+        from app.models.video_history_model import VideoHistory
+
+        # Initial ChannelHistory
+        ch_snap = ChannelHistory(
+            channel_id=channel.channel_id,
+            subscribers=channel.subscriber_count or 0,
+            total_views=channel.total_views or 0,
+            total_videos=channel.video_count or 0,
+            recorded_at=utc_now(),
+            created_at=utc_now(),
+        )
+        db.session.add(ch_snap)
+
         raw_videos = youtube_client.get_channel_videos(channel.channel_id, max_results=50)
         created = 0
         for rv in raw_videos:
             ext_id = rv.get("external_id", "")
             existing = Video.query.filter_by(platform="youtube", external_id=ext_id).first()
+            pub_at = rv.get("published_at")
+            if isinstance(pub_at, str):
+                try:
+                    pub_at = datetime.fromisoformat(pub_at.replace("Z", "+00:00")).replace(tzinfo=None)
+                except Exception:
+                    pub_at = None
+
+            dur = rv.get("duration_seconds") or 0
+            is_short = (dur > 0 and dur <= 60)
+
             if existing:
                 video = existing
+                video.category = rv.get("category", video.category)
+                video.live_status = rv.get("live_status", video.live_status)
+                video.is_short = is_short
             else:
-                pub_at = rv.get("published_at")
-                if isinstance(pub_at, str):
-                    try:
-                        pub_at = datetime.fromisoformat(pub_at.replace("Z", "+00:00")).replace(tzinfo=None)
-                    except Exception:
-                        pub_at = None
                 video = Video(
                     tracked_channel_id=channel.id,
                     platform="youtube",
@@ -127,7 +166,10 @@ def sync_tracked_channel(channel_id: int):
                     description=rv.get("description", ""),
                     tags=rv.get("tags", []),
                     thumbnail_url=rv.get("thumbnail_url", ""),
-                    duration_seconds=rv.get("duration_seconds"),
+                    duration_seconds=dur,
+                    category=rv.get("category"),
+                    live_status=rv.get("live_status", "none"),
+                    is_short=is_short,
                     published_at=pub_at,
                     fetched_at=utc_now(),
                 )
@@ -147,6 +189,15 @@ def sync_tracked_channel(channel_id: int):
                 engagement_rate=engagement, recorded_at=utc_now(),
             )
             db.session.add(metric)
+
+            # VideoHistory record
+            v_hist = VideoHistory(
+                video_id=video.id,
+                external_id=ext_id,
+                views=views, likes=likes, comments=comments, shares=shares,
+                recorded_at=utc_now(), created_at=utc_now(),
+            )
+            db.session.add(v_hist)
 
         db.session.commit()
         return jsonify({

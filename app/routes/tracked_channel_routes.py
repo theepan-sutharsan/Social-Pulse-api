@@ -15,7 +15,7 @@ def get_tracked_channels():
 
 
 @bp.route("", methods=["POST"])
-@roles_required("admin")
+@roles_required("admin", "member")
 def create_tracked_channel():
     return tracked_channel_controller.create_tracked_channel()
 
@@ -27,13 +27,13 @@ def get_tracked_channel(channel_id: int):
 
 
 @bp.route("/<int:channel_id>", methods=["DELETE"])
-@roles_required("admin")
+@roles_required("admin", "member")
 def delete_tracked_channel(channel_id: int):
     return tracked_channel_controller.delete_tracked_channel(channel_id)
 
 
 @bp.route("/<int:channel_id>/sync", methods=["POST"])
-@roles_required("admin")
+@roles_required("admin", "member")
 def sync_tracked_channel(channel_id: int):
     return tracked_channel_controller.sync_tracked_channel(channel_id)
 
