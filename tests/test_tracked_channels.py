@@ -69,14 +69,14 @@ def test_member_can_list_tracked_channels(client):
     assert resp.status_code == 200
 
 
-def test_member_cannot_create_tracked_channel(client):
+def test_member_can_create_tracked_channel(client):
     token = _register_member(client)
     resp = client.post(
         "/api/tracked-channels",
         json={"channel_id": "UCtest", "channel_name": "Test Channel", "niche": "Tech"},
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 201
 
 
 def test_admin_can_create_tracked_channel(client):

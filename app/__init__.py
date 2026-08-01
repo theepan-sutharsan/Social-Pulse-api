@@ -45,6 +45,10 @@ def create_app(config_class=Config):
             suggestion_source_model,
             thumbnail_analysis_model,
             alert_model,
+            channel_history_model,
+            video_history_model,
+            account_history_model,
+            post_history_model,
         )
         try:
             db.create_all()
