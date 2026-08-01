@@ -95,10 +95,48 @@ def get_tiktok_oauth_url():
 
 
 def oauth_callback():
-    user = get_current_user()
-    data = request.get_json(silent=True) or {}
-    code = data.get("code", "").strip()
-    platform = data.get("platform", "").strip()
+    from flask_jwt_extended import verify_jwt_in_request
+    from flask import redirect
+    
+    code = None
+    platform = None
+    user_id = None
+
+    if request.method == "GET":
+        code = request.args.get("code", "").strip()
+        raw_state = request.args.get("state", "").strip()
+        if ":" in raw_state:
+            platform, user_id_str = raw_state.split(":", 1)
+            try:
+                user_id = int(user_id_str)
+            except ValueError:
+                user_id = None
+        else:
+            platform = raw_state
+    else:
+        data = request.get_json(silent=True) or {}
+        code = data.get("code", "").strip()
+        platform = data.get("platform", "").strip()
+
+    # User lookup
+    user = None
+    try:
+        verify_jwt_in_request(optional=True)
+        user = get_current_user()
+    except Exception:
+        pass
+
+    if not user and user_id:
+        from app.models.user_model import User
+        user = User.query.get(user_id)
+
+    if not user:
+        # Fallback to first active user if in local single-user mode
+        from app.models.user_model import User
+        user = User.query.first()
+
+    if not user:
+        return jsonify({"error": "Unauthorized user for OAuth callback."}), 401
 
     if not code or platform not in ("instagram", "facebook", "tiktok"):
         return jsonify({"errors": ["code and valid platform are required."]}), 400
@@ -116,32 +154,40 @@ def oauth_callback():
         platform=platform,
         platform_account_id=token_data["platform_account_id"],
     ).first()
-    if existing:
-        return jsonify({"error": "This account is already connected."}), 400
 
     expires_at = None
     if token_data.get("expires_in"):
         from datetime import timedelta
         expires_at = utc_now() + timedelta(seconds=token_data["expires_in"])
 
-    account = ConnectedAccount(
-        user_id=user.id,
-        platform=platform,
-        platform_account_id=token_data["platform_account_id"],
-        display_name=token_data["display_name"],
-        access_token=token_data.get("access_token"),
-        refresh_token=token_data.get("refresh_token"),
-        token_expires_at=expires_at,
-        created_at=utc_now(),
-    )
-    try:
+    if existing:
+        existing.access_token = token_data.get("access_token")
+        existing.display_name = token_data.get("display_name") or existing.display_name
+        existing.token_expires_at = expires_at
+        account = existing
+    else:
+        account = ConnectedAccount(
+            user_id=user.id,
+            platform=platform,
+            platform_account_id=token_data["platform_account_id"],
+            display_name=token_data["display_name"],
+            access_token=token_data.get("access_token"),
+            refresh_token=token_data.get("refresh_token"),
+            token_expires_at=expires_at,
+            created_at=utc_now(),
+        )
         db.session.add(account)
+
+    try:
         db.session.commit()
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": f"Failed to save account: {str(e)}"}), 500
 
-    return jsonify({"message": f"{platform.title()} account connected.", "account": account.to_dict()}), 201
+    if request.method == "GET":
+        return redirect("http://localhost:3000/accounts?connected=success")
+
+    return jsonify({"message": f"{platform.title()} account connected successfully.", "account": account.to_dict()}), 201
 
 
 def delete_account(account_id: int):

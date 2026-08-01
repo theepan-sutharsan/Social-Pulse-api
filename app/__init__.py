@@ -49,6 +49,7 @@ def create_app(config_class=Config):
             video_history_model,
             account_history_model,
             post_history_model,
+            video_analysis_model,
         )
         try:
             db.create_all()

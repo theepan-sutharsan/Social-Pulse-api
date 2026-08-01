@@ -1,6 +1,6 @@
 """
-Social Pulse API — Meta (Facebook / Instagram) OAuth Client
-Handles OAuth exchange and Graph API data fetching.
+Social Pulse API — Meta (Facebook / Instagram) OAuth & Graph API Client
+Handles real Meta OAuth authentication, long-lived token generation, and Graph API data fetching.
 """
 from flask import current_app
 import requests
@@ -12,18 +12,18 @@ META_GRAPH_BASE = "https://graph.facebook.com/v19.0"
 
 def _cfg():
     return {
-        "app_id": current_app.config.get("META_APP_ID", ""),
-        "app_secret": current_app.config.get("META_APP_SECRET", ""),
-        "redirect_uri": current_app.config.get("META_REDIRECT_URI", ""),
+        "app_id": str(current_app.config.get("META_APP_ID", "")).strip(),
+        "app_secret": str(current_app.config.get("META_APP_SECRET", "")).strip(),
+        "redirect_uri": current_app.config.get("META_REDIRECT_URI", "").strip(),
     }
 
 
 def is_valid_app_id(app_id: str) -> bool:
-    """Check if app_id is a valid production app ID (not empty, placeholder, or dummy)."""
+    """Check if app_id is a valid production app ID (not empty or template placeholder)."""
     if not app_id:
         return False
     app_id_str = str(app_id).strip()
-    if app_id_str.startswith("your-") or app_id_str in ("1585245593385761", "123456789"):
+    if app_id_str.startswith("your-") or app_id_str.startswith("your_") or app_id_str in ("123456789", "000000000"):
         return False
     return True
 
@@ -32,7 +32,7 @@ def get_instagram_oauth_url(state: str = "") -> str:
     cfg = _cfg()
     if not is_valid_app_id(cfg["app_id"]):
         return "mock_instagram_oauth"
-    scopes = "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement"
+    scopes = "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,business_management"
     return (
         f"{META_AUTH_BASE}?client_id={cfg['app_id']}"
         f"&redirect_uri={cfg['redirect_uri']}"
@@ -46,7 +46,7 @@ def get_facebook_oauth_url(state: str = "") -> str:
     cfg = _cfg()
     if not is_valid_app_id(cfg["app_id"]):
         return "mock_facebook_oauth"
-    scopes = "pages_show_list,pages_read_engagement,read_insights"
+    scopes = "public_profile,pages_show_list,pages_read_engagement,read_insights,pages_read_user_content"
     return (
         f"{META_AUTH_BASE}?client_id={cfg['app_id']}"
         f"&redirect_uri={cfg['redirect_uri']}"
@@ -57,10 +57,14 @@ def get_facebook_oauth_url(state: str = "") -> str:
 
 
 def exchange_code_for_token(code: str, platform: str) -> dict:
-    """Exchange OAuth code for access token. Returns token dict or raises."""
+    """
+    Exchange OAuth code for access token.
+    Exchanges short-lived token for long-lived token (60 days) and resolves 
+    Instagram Business Account ID or Facebook Page ID.
+    """
     cfg = _cfg()
     if not is_valid_app_id(cfg["app_id"]) or code.startswith("mock"):
-        # Stub / Mock data for demo
+        # Stub / Mock data for demo if app_id is unconfigured or mock code passed
         import random
         random_suffix = str(random.randint(100, 999))
         return {
@@ -68,9 +72,11 @@ def exchange_code_for_token(code: str, platform: str) -> dict:
             "refresh_token": None,
             "expires_in": 5184000,
             "platform_account_id": f"stub_{platform}_acc_{random_suffix}",
-            "display_name": f"Alex Creator ({platform.title()})",
+            "display_name": f"Creator Account ({platform.title()})",
         }
+
     try:
+        # Step 1: Exchange code for short-lived access token
         resp = requests.get(
             META_TOKEN_URL,
             params={
@@ -79,61 +85,119 @@ def exchange_code_for_token(code: str, platform: str) -> dict:
                 "redirect_uri": cfg["redirect_uri"],
                 "code": code,
             },
-            timeout=10,
+            timeout=15,
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            err_msg = resp.json().get("error", {}).get("message", resp.text)
+            raise RuntimeError(f"Meta token exchange error: {err_msg}")
+
         token_data = resp.json()
-        access_token = token_data.get("access_token")
-        # Get user/page info
-        me_resp = requests.get(
-            f"{META_GRAPH_BASE}/me",
-            params={"fields": "id,name", "access_token": access_token},
-            timeout=10,
+        short_token = token_data.get("access_token")
+
+        # Step 2: Exchange for Long-Lived User Access Token (60 days)
+        ll_resp = requests.get(
+            f"{META_GRAPH_BASE}/oauth/access_token",
+            params={
+                "grant_type": "fb_exchange_token",
+                "client_id": cfg["app_id"],
+                "client_secret": cfg["app_secret"],
+                "fb_exchange_token": short_token,
+            },
+            timeout=15,
         )
-        me_resp.raise_for_status()
-        me_data = me_resp.json()
+        if ll_resp.status_code == 200:
+            ll_data = ll_resp.json()
+            access_token = ll_data.get("access_token") or short_token
+            expires_in = ll_data.get("expires_in", 5184000)
+        else:
+            access_token = short_token
+            expires_in = token_data.get("expires_in", 5184000)
+
+        # Step 3: Fetch Connected Pages & Instagram Accounts
+        me_accounts_resp = requests.get(
+            f"{META_GRAPH_BASE}/me/accounts",
+            params={
+                "fields": "id,name,access_token,instagram_business_account{id,username,name}",
+                "access_token": access_token,
+            },
+            timeout=15,
+        )
+
+        account_id = None
+        display_name = None
+
+        if me_accounts_resp.status_code == 200:
+            pages = me_accounts_resp.json().get("data", [])
+            if platform == "instagram":
+                for p in pages:
+                    ig_acc = p.get("instagram_business_account")
+                    if ig_acc and ig_acc.get("id"):
+                        account_id = ig_acc["id"]
+                        username = ig_acc.get("username") or ig_acc.get("name")
+                        display_name = f"@{username}" if username and not username.startswith("@") else (username or "Instagram Account")
+                        break
+            elif platform == "facebook":
+                if pages:
+                    p = pages[0]
+                    account_id = p.get("id")
+                    display_name = p.get("name") or "Facebook Page"
+
+        # Fallback to /me endpoint if no pages found
+        if not account_id:
+            me_resp = requests.get(
+                f"{META_GRAPH_BASE}/me",
+                params={"fields": "id,name", "access_token": access_token},
+                timeout=15,
+            )
+            if me_resp.status_code == 200:
+                me_data = me_resp.json()
+                account_id = me_data.get("id")
+                display_name = display_name or me_data.get("name") or f"Meta Account ({platform.title()})"
+
+        if not account_id:
+            raise RuntimeError("Could not retrieve platform account ID from Meta Graph API.")
+
         return {
             "access_token": access_token,
             "refresh_token": None,
-            "expires_in": token_data.get("expires_in", 5184000),
-            "platform_account_id": me_data.get("id", ""),
-            "display_name": me_data.get("name", f"Meta Account ({platform})"),
+            "expires_in": expires_in,
+            "platform_account_id": account_id,
+            "display_name": display_name or f"Meta Account ({platform.title()})",
         }
+
     except Exception as e:
         current_app.logger.error(f"Meta OAuth exchange error: {e}")
-        # Fallback to stub if exchange fails
-        return {
-            "access_token": "stub_meta_access_token",
-            "refresh_token": None,
-            "expires_in": 5184000,
-            "platform_account_id": f"stub_{platform}_acc",
-            "display_name": f"Alex Creator ({platform.title()})",
-        }
+        raise RuntimeError(f"Failed to connect Meta account: {str(e)}")
 
 
 def get_instagram_posts(account_id: str, access_token: str, limit: int = 50) -> list:
-    """Fetch Instagram posts for a business account."""
+    """Fetch real Instagram posts for a business account via Meta Graph API."""
     if access_token.startswith("stub") or not access_token:
         return _stub_ig_posts(account_id, limit)
     try:
         resp = requests.get(
             f"{META_GRAPH_BASE}/{account_id}/media",
             params={
-                "fields": "id,caption,media_type,timestamp,like_count,comments_count,permalink",
+                "fields": "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count",
                 "limit": limit,
                 "access_token": access_token,
             },
-            timeout=10,
+            timeout=15,
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            current_app.logger.warning(f"Instagram Graph API returned status {resp.status_code}: {resp.text}")
+            return _stub_ig_posts(account_id, limit)
+
         posts = []
         for item in resp.json().get("data", []):
+            thumb = item.get("thumbnail_url") or item.get("media_url") or ""
+            caption = item.get("caption") or ""
             posts.append({
                 "external_id": item["id"],
-                "title": (item.get("caption") or "")[:200],
-                "description": item.get("caption") or "",
+                "title": caption[:200] if caption else "Instagram Post",
+                "description": caption,
                 "tags": ["instagram", "content"],
-                "thumbnail_url": item.get("media_url", ""),
+                "thumbnail_url": thumb,
                 "duration_seconds": 0,
                 "published_at": item.get("timestamp"),
                 "likes": item.get("like_count", 0),
@@ -148,34 +212,39 @@ def get_instagram_posts(account_id: str, access_token: str, limit: int = 50) -> 
 
 
 def get_facebook_posts(account_id: str, access_token: str, limit: int = 50) -> list:
-    """Fetch Facebook page posts."""
+    """Fetch real Facebook page posts via Meta Graph API."""
     if access_token.startswith("stub") or not access_token:
         return _stub_fb_posts(account_id, limit)
     try:
         resp = requests.get(
             f"{META_GRAPH_BASE}/{account_id}/posts",
             params={
-                "fields": "id,message,created_time,likes.summary(true),comments.summary(true)",
+                "fields": "id,message,created_time,full_picture,permalink_url,likes.summary(true),comments.summary(true),shares",
                 "limit": limit,
                 "access_token": access_token,
             },
-            timeout=10,
+            timeout=15,
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            current_app.logger.warning(f"Facebook Graph API returned status {resp.status_code}: {resp.text}")
+            return _stub_fb_posts(account_id, limit)
+
         posts = []
         for item in resp.json().get("data", []):
+            msg = item.get("message") or ""
+            shares_cnt = item.get("shares", {}).get("count", 0) if isinstance(item.get("shares"), dict) else 0
             posts.append({
                 "external_id": item["id"],
-                "title": (item.get("message") or "")[:200],
-                "description": item.get("message") or "",
+                "title": msg[:200] if msg else "Facebook Post",
+                "description": msg,
                 "tags": ["facebook", "page"],
-                "thumbnail_url": "",
+                "thumbnail_url": item.get("full_picture") or "",
                 "duration_seconds": 0,
                 "published_at": item.get("created_time"),
                 "likes": item.get("likes", {}).get("summary", {}).get("total_count", 0),
                 "comments": item.get("comments", {}).get("summary", {}).get("total_count", 0),
                 "views": 0,
-                "shares": 0,
+                "shares": shares_cnt,
             })
         return posts
     except Exception as e:

@@ -18,6 +18,7 @@ def register_blueprints(app):
         channel_analytics_routes,
         video_analytics_routes,
         multiplatform_analytics_routes,
+        video_analysis_routes,
     )
     app.register_blueprint(auth_routes.bp)
     app.register_blueprint(account_routes.bp)
@@ -31,6 +32,7 @@ def register_blueprints(app):
     app.register_blueprint(health_routes.bp)
     app.register_blueprint(channel_analytics_routes.bp)
     app.register_blueprint(video_analytics_routes.bp)
+    app.register_blueprint(video_analysis_routes.bp)
     app.register_blueprint(multiplatform_analytics_routes.bp_accounts)
     app.register_blueprint(multiplatform_analytics_routes.bp_competitors)
     app.register_blueprint(multiplatform_analytics_routes.bp_posts)
