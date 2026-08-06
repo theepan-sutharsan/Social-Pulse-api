@@ -1,7 +1,7 @@
 """
 Social Pulse API — YouTube Channel Analysis Controller
 Orchestrates channel resolution, video fetch, transcript batch fetch,
-Claude analysis, DB persistence, and history retrieval.
+AI analysis (Claude or Gemini), DB persistence, and history retrieval.
 All analysis runs synchronously within the Flask request (no Celery).
 """
 import logging
@@ -26,13 +26,13 @@ logger = logging.getLogger(__name__)
 def start_analysis():
     """
     POST /api/yt-channel-analysis/start
-    Payload: { "channel_url": "https://youtube.com/@handle" }
+    Payload: { "channel_url": "https://youtube.com/@handle", "provider": "claude" | "gemini" }
 
     Synchronously:
     1. Resolves channel via YouTube Data API
     2. Fetches last 50 video metadata
     3. Fetches/caches transcripts for all videos
-    4. Calls Claude API for analysis + idea generation
+    4. Calls the selected AI provider (Claude or Gemini) for analysis + idea generation
     5. Persists results to DB
     6. Returns full analysis result
     """
@@ -44,6 +44,10 @@ def start_analysis():
     channel_url = (data.get("channel_url") or "").strip()
     if not channel_url:
         return jsonify({"error": "channel_url is required."}), 400
+
+    provider = (data.get("provider") or "claude").lower().strip()
+    if provider not in ("claude", "gemini"):
+        return jsonify({"error": f"Unsupported provider '{provider}'. Choose 'claude' or 'gemini'."}), 400
 
     # --- Step 1: Resolve channel ---
     try:
@@ -157,11 +161,11 @@ def start_analysis():
             else:
                 all_transcripts[vid_id] = {"text": None, "source": "failed", "language": None}
 
-        # --- Step 4: Build payload + call Claude ---
+        # --- Step 4: Build payload + call AI provider ---
         try:
             payload = build_analysis_payload(videos, all_transcripts)
             analysis_result = generate_channel_analysis(
-                channel_meta["channel_title"], payload
+                channel_meta["channel_title"], payload, provider=provider
             )
         except YTAnalysisServiceError as e:
             raise Exception(f"AI analysis failed: {e}")
@@ -175,6 +179,7 @@ def start_analysis():
             "topic_clusters": analysis_result.get("topic_clusters", []),
             "content_gaps": analysis_result.get("content_gaps", ""),
             "optimal_duration_seconds": analysis_result.get("optimal_duration_seconds", 0),
+            "ai_provider": provider,
         }
         run.generated_ideas = analysis_result.get("video_ideas", [])
         run.script_outline = analysis_result.get("top_pick_script_outline", "")
