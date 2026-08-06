@@ -153,38 +153,60 @@ def _call_claude(system_prompt: str, user_prompt: str) -> str:
 # ─── Gemini provider ─────────────────────────────────────────────────────────
 
 def _call_gemini(system_prompt: str, user_prompt: str) -> str:
-    """Call Google Gemini API and return the raw response text."""
+    """
+    Call Google Gemini API via direct REST (no SDK required).
+    Uses the same approach as video_ai_analyzer.py for reliability.
+    Falls back through model names: configured model → gemini-2.0-flash → gemini-1.5-flash.
+    """
+    import requests as _requests
+
     api_key = current_app.config.get("GOOGLE_API_KEY", "")
     if not api_key:
         raise YTAnalysisServiceError(
             "GOOGLE_API_KEY is not configured. Add it to your .env file."
         )
 
+    base_url = current_app.config.get(
+        "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
+    ).rstrip("/")
     model = current_app.config.get("GEMINI_MODEL", "gemini-2.0-flash")
 
-    try:
-        import google.generativeai as genai
-    except ImportError:
-        raise YTAnalysisServiceError(
-            "google-generativeai library is not installed. Run: pip install google-generativeai"
-        )
+    # Combine system + user prompt since REST API system_instruction
+    # is a top-level field in the request body
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "system_instruction": {"parts": [{"text": system_prompt}]},
+        "contents": [{"parts": [{"text": user_prompt}]}],
+        "generationConfig": {
+            "temperature": 0.7,
+            "maxOutputTokens": 4096,
+            "responseMimeType": "application/json",
+        },
+    }
 
-    try:
-        genai.configure(api_key=api_key)
-        gemini_model = genai.GenerativeModel(
-            model_name=model,
-            system_instruction=system_prompt,
-        )
-        response = gemini_model.generate_content(
-            user_prompt,
-            generation_config=genai.types.GenerationConfig(
-                max_output_tokens=4096,
-                temperature=0.7,
-            ),
-        )
-        return response.text.strip() if response.text else ""
-    except Exception as e:
-        raise YTAnalysisServiceError(f"Gemini API call failed: {e}")
+    # Try configured model, then known-good fallbacks
+    models_to_try = [model, "gemini-2.0-flash", "gemini-1.5-flash"]
+    seen = set()
+    last_error = None
+
+    for m in models_to_try:
+        if m in seen:
+            continue
+        seen.add(m)
+        url = f"{base_url}/models/{m}:generateContent?key={api_key}"
+        try:
+            res = _requests.post(url, headers=headers, json=payload, timeout=60)
+            if res.status_code == 200:
+                data = res.json()
+                raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                return raw
+            last_error = f"HTTP {res.status_code}: {res.text[:300]}"
+            logger.warning(f"Gemini model '{m}' returned {res.status_code}, trying next...")
+        except Exception as e:
+            last_error = str(e)
+            logger.warning(f"Gemini model '{m}' request failed: {e}")
+
+    raise YTAnalysisServiceError(f"Gemini API call failed after all fallbacks. Last error: {last_error}")
 
 
 # ─── Public entry point ───────────────────────────────────────────────────────

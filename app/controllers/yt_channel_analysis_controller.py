@@ -26,11 +26,15 @@ logger = logging.getLogger(__name__)
 def start_analysis():
     """
     POST /api/yt-channel-analysis/start
-    Payload: { "channel_url": "https://youtube.com/@handle", "provider": "claude" | "gemini" }
+    Payload: {
+      "channel_url": "https://youtube.com/@handle",
+      "provider": "claude" | "gemini",
+      "video_count": 10 | 20 | 30 | 50  (default: 50)
+    }
 
     Synchronously:
     1. Resolves channel via YouTube Data API
-    2. Fetches last 50 video metadata
+    2. Fetches last N video metadata (user-chosen count)
     3. Fetches/caches transcripts for all videos
     4. Calls the selected AI provider (Claude or Gemini) for analysis + idea generation
     5. Persists results to DB
@@ -48,6 +52,16 @@ def start_analysis():
     provider = (data.get("provider") or "claude").lower().strip()
     if provider not in ("claude", "gemini"):
         return jsonify({"error": f"Unsupported provider '{provider}'. Choose 'claude' or 'gemini'."}), 400
+
+    # Validate video count — allowed: 10, 20, 30, 50
+    ALLOWED_COUNTS = {10, 20, 30, 50}
+    try:
+        video_count = int(data.get("video_count") or 50)
+    except (TypeError, ValueError):
+        video_count = 50
+    if video_count not in ALLOWED_COUNTS:
+        # Clamp to nearest allowed value
+        video_count = min(ALLOWED_COUNTS, key=lambda x: abs(x - video_count))
 
     # --- Step 1: Resolve channel ---
     try:
@@ -90,9 +104,9 @@ def start_analysis():
     db.session.commit()
 
     try:
-        # --- Step 2: Fetch last 50 videos ---
+        # --- Step 2: Fetch last N videos (user-selected count) ---
         try:
-            videos = fetch_last_n_videos(channel_meta["channel_id"], n=50)
+            videos = fetch_last_n_videos(channel_meta["channel_id"], n=video_count)
         except YouTubeChannelServiceError as e:
             raise Exception(f"Video fetch failed: {e}")
 
@@ -180,6 +194,7 @@ def start_analysis():
             "content_gaps": analysis_result.get("content_gaps", ""),
             "optimal_duration_seconds": analysis_result.get("optimal_duration_seconds", 0),
             "ai_provider": provider,
+            "video_count_requested": video_count,
         }
         run.generated_ideas = analysis_result.get("video_ideas", [])
         run.script_outline = analysis_result.get("top_pick_script_outline", "")
