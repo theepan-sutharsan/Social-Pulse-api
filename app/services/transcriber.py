@@ -1,6 +1,7 @@
 """
 Social Pulse API — Audio Transcription Service
 Transcribes audio files into text using faster-whisper.
+Also provides a fast transcript lookup via youtube-transcript-api.
 """
 import os
 import logging
@@ -49,3 +50,54 @@ def transcribe_audio(audio_path: str, model_size: str = "tiny") -> str:
         logger.error(f"Whisper transcription failed: {str(e)}")
         # If faster-whisper fails due to missing CTranslate2 or model loading issues, raise clean exception
         raise TranscriptionError(f"Audio transcription error: {str(e)}")
+
+
+def get_youtube_transcript(video_id: str) -> str | None:
+    """
+    Attempt to fetch an existing YouTube caption transcript for a video.
+    Uses youtube-transcript-api — no audio download required.
+
+    Returns:
+        str:  The full transcript text joined into a single string, or
+        None: if no transcript is available (private, disabled, or no captions).
+    """
+    if not video_id:
+        return None
+
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
+
+        try:
+            # Prefer English; fall back to any available language
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            try:
+                transcript = transcript_list.find_transcript(["en", "en-US", "en-GB"])
+            except NoTranscriptFound:
+                # Use whatever language is available, auto-translated to English
+                transcript = transcript_list.find_manually_created_transcript()
+        except (NoTranscriptFound, Exception):
+            try:
+                # Last resort: any generated transcript
+                data = YouTubeTranscriptApi.get_transcript(video_id)
+                text = " ".join(entry["text"] for entry in data if entry.get("text"))
+                return text.strip() if text.strip() else None
+            except Exception:
+                return None
+
+        data = transcript.fetch()
+        # FetchedTranscript is iterable; each item has .text attribute (or dict key 'text')
+        parts = []
+        for entry in data:
+            if hasattr(entry, 'text'):
+                parts.append(entry.text)
+            elif isinstance(entry, dict) and entry.get('text'):
+                parts.append(entry['text'])
+        text = " ".join(parts).strip()
+        return text if text else None
+
+    except ImportError:
+        logger.warning("youtube-transcript-api is not installed. Skipping caption lookup.")
+        return None
+    except Exception as e:
+        logger.debug(f"YouTube transcript fetch skipped for {video_id}: {e}")
+        return None
