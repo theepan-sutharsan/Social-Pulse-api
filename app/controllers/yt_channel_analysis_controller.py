@@ -188,16 +188,16 @@ def start_analysis():
         run.status = "completed"
         run.videos_analyzed_count = len(videos)
         run.analysis_summary = {
-            "performance_insights": analysis_result.get("performance_insights", ""),
-            "title_patterns": analysis_result.get("title_patterns", ""),
-            "topic_clusters": analysis_result.get("topic_clusters", []),
-            "content_gaps": analysis_result.get("content_gaps", ""),
-            "optimal_duration_seconds": analysis_result.get("optimal_duration_seconds", 0),
+            # New schema — per-video breakdown + overall insights
+            "video_analysis": analysis_result.get("video_analysis", []),
+            "overall_channel_insights": analysis_result.get("overall_channel_insights", {}),
+            "total_videos_analyzed": analysis_result.get("total_videos_analyzed", len(videos)),
+            # Metadata
             "ai_provider": provider,
             "video_count_requested": video_count,
         }
-        run.generated_ideas = analysis_result.get("video_ideas", [])
-        run.script_outline = analysis_result.get("top_pick_script_outline", "")
+        run.generated_ideas = analysis_result.get("overall_channel_insights", {}).get("future_video_ideas", [])
+        run.script_outline = ""  # No longer generated; ideas are in overall_channel_insights
         run.completed_at = datetime.now(timezone.utc)
         channel_row.last_analyzed_at = datetime.now(timezone.utc)
         db.session.commit()

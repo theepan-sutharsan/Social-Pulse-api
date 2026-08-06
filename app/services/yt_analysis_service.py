@@ -1,12 +1,14 @@
 """
 Social Pulse API — YouTube Channel AI Analysis Service
 Supports multiple AI providers: Claude (Anthropic) and Gemini (Google).
-Builds a structured payload from video + transcript data and sends it to the
-selected provider for pattern analysis, idea generation, and script outline.
+
+New analysis schema: per-video individual breakdown + overall channel insights.
+Every video in the list is analyzed — no skipping.
 """
 import json
 import logging
 import re
+import requests as _requests
 from flask import current_app
 
 logger = logging.getLogger(__name__)
@@ -19,73 +21,52 @@ class YTAnalysisServiceError(Exception):
     pass
 
 
+# ─── Payload builder ─────────────────────────────────────────────────────────
+
 def build_analysis_payload(videos: list[dict], transcripts: dict[str, dict]) -> dict:
     """
-    Condense videos into a compact structured summary for AI analysis.
-    Videos are the last N most recent uploads (newest first from YouTube uploads playlist).
-    Scales top/bottom performer buckets dynamically based on actual count to avoid
-    duplication when a small count (e.g. 10) is selected.
+    Build a comprehensive payload of ALL videos for per-video AI analysis.
+    Every video is included with full metadata + transcript excerpt.
+    Videos are the most recent N uploads (newest first from YouTube uploads playlist).
     """
     if not videos:
         raise YTAnalysisServiceError("No video data provided for analysis.")
 
-    total = len(videos)
-
-    def summarize(v: dict, include_transcript: bool = True) -> dict:
+    def build_video_entry(v: dict) -> dict:
         vid_id = v.get("video_id", "")
-        t_data = transcripts.get(vid_id, {}) if include_transcript else {}
+        t_data = transcripts.get(vid_id, {})
         raw_text = t_data.get("text") or ""
-        transcript_excerpt = raw_text[:600].strip() if raw_text else ""
+        transcript_excerpt = raw_text[:800].strip() if raw_text else ""
 
-        entry = {
-            "title": v.get("title", ""),
-            "views": v.get("view_count", 0),
-            "likes": v.get("like_count", 0),
-            "comments": v.get("comment_count", 0),
-            "duration_sec": v.get("duration_seconds", 0),
-            "published_at": v["published_at"].isoformat() if v.get("published_at") else None,
-            "tags": (v.get("tags") or [])[:10],
-        }
-        if include_transcript:
-            entry["transcript_excerpt"] = transcript_excerpt
-        return entry
+        views = v.get("view_count", 0)
+        likes = v.get("like_count", 0)
+        comments = v.get("comment_count", 0)
+        # Engagement rate: (likes + comments) / views * 100, capped reasonably
+        engagement_rate = round((likes + comments) / views * 100, 2) if views > 0 else 0.0
 
-    # For small counts send all videos once; for larger counts split into
-    # top/bottom performers by view count (with transcript excerpts for best/worst only)
-    if total <= 15:
-        # All videos are "recent" — send them all with transcripts, no duplication
-        sorted_by_views = sorted(videos, key=lambda v: v.get("view_count", 0), reverse=True)
         return {
-            "total_videos_analyzed": total,
-            "note": f"These are the {total} most recent uploads, sorted by view count below.",
-            "all_videos": [summarize(v) for v in sorted_by_views],
-            "all_titles": [
-                {
-                    "title": v.get("title", ""),
-                    "published_at": v["published_at"].isoformat() if v.get("published_at") else None,
-                }
-                for v in videos  # chronological order (newest first)
-            ],
+            "video_id": vid_id,
+            "title": v.get("title", ""),
+            "url": f"https://www.youtube.com/watch?v={vid_id}",
+            "published_at": v["published_at"].isoformat() if v.get("published_at") else None,
+            "duration_sec": v.get("duration_seconds", 0),
+            "views": views,
+            "likes": likes,
+            "comments": comments,
+            "engagement_rate_pct": engagement_rate,
+            "tags": (v.get("tags") or [])[:10],
+            "transcript_excerpt": transcript_excerpt,
         }
 
-    # Larger counts: split into top/bottom buckets (scale bucket to ~20% of total, min 5, max 15)
-    bucket_size = max(5, min(15, total // 5))
-    sorted_by_views = sorted(videos, key=lambda v: v.get("view_count", 0), reverse=True)
-    top_n = sorted_by_views[:bucket_size]
-    bottom_n = sorted_by_views[-bucket_size:]
+    video_entries = [build_video_entry(v) for v in videos]
 
     return {
-        "total_videos_analyzed": total,
-        "note": f"These are the {total} most recent uploads. Top/bottom {bucket_size} shown by view count.",
-        "top_performers": [summarize(v) for v in top_n],
-        "low_performers": [summarize(v) for v in bottom_n],
-        "all_titles": [
-            {
-                "title": v.get("title", ""),
-                "published_at": v["published_at"].isoformat() if v.get("published_at") else None,
-            }
-            for v in videos  # chronological order (newest first)
-        ],
+        "total_videos": len(videos),
+        "note": (
+            f"These are the {len(videos)} most recent uploads from the channel, "
+            "ordered newest-first. Analyze EVERY video individually."
+        ),
+        "videos": video_entries,
     }
 
 
@@ -94,61 +75,117 @@ def build_analysis_payload(videos: list[dict], transcripts: dict[str, dict]) -> 
 def _build_prompts(channel_title: str, payload: dict) -> tuple[str, str]:
     """Return (system_prompt, user_prompt) for any provider."""
     system_prompt = (
-        "You are an expert YouTube content strategist with deep knowledge of algorithm "
-        "optimization, audience psychology, and viral content patterns. You analyze channel "
-        "performance data and produce highly actionable insights. Always respond with ONLY "
-        "valid JSON — no markdown formatting, no code fences, no preamble or explanation "
-        "outside the JSON."
+        "You are an expert YouTube channel analyst with deep knowledge of "
+        "algorithm optimization, audience psychology, SEO, thumbnail design, "
+        "and viral content patterns. "
+        "You analyze EVERY video provided — you never skip any. "
+        "Always respond with ONLY valid JSON — no markdown, no code fences, "
+        "no preamble or explanation outside the JSON object."
     )
 
-    user_prompt = f"""Channel: {channel_title}
+    user_prompt = f"""You are an expert YouTube channel analyst.
 
-Performance Data (top/bottom videos by views + all titles for pattern scanning):
-{json.dumps(payload, indent=2, default=str)}
+Channel: {channel_title}
 
-Analyze this data and respond with ONLY the following JSON structure (no markdown, no extra text):
+Analyze ALL the provided videos below. The list contains {payload['total_videos']} videos.
+{payload['note']}
+
+IMPORTANT INSTRUCTIONS:
+- Analyze EVERY video in the list. Do NOT skip any.
+- Do NOT select only top-performing videos.
+- Generate an individual analysis for EACH video.
+- Compare all videos together and provide overall channel insights.
+
+Video Data:
+{json.dumps(payload['videos'], indent=2, default=str)}
+
+For each video analyze:
+1. Title quality (score 1-10)
+2. Thumbnail quality (score 1-10, based on title/topic context since image not provided)
+3. SEO optimization (score 1-10, based on title keywords and tags)
+4. Content quality (score 1-10, based on transcript and engagement signals)
+5. Audience engagement analysis
+6. Strengths (list)
+7. Weaknesses (list)
+8. Improvement suggestions (list)
+
+After analyzing ALL videos, provide overall channel insights.
+
+Respond with ONLY this exact JSON structure (no markdown, no extra text):
 {{
-  "performance_insights": "2-3 sentences on what drives high vs low performance for this channel",
-  "title_patterns": "common structural patterns found in high-performing titles (e.g. listicles, how-tos, controversy hooks)",
-  "topic_clusters": ["topic1", "topic2", "topic3", "topic4", "topic5"],
-  "content_gaps": "topics or angles this channel hasn't covered but the audience likely wants based on the data",
-  "optimal_duration_seconds": 600,
-  "video_ideas": [
-    {{"title": "...", "hook": "First 10 seconds hook script", "rationale": "Why this will perform based on the data patterns"}},
-    {{"title": "...", "hook": "...", "rationale": "..."}},
-    {{"title": "...", "hook": "...", "rationale": "..."}},
-    {{"title": "...", "hook": "...", "rationale": "..."}},
-    {{"title": "...", "hook": "...", "rationale": "..."}}
+  "total_videos_analyzed": {payload['total_videos']},
+  "video_analysis": [
+    {{
+      "video_id": "",
+      "title": "",
+      "url": "",
+      "published_at": "",
+      "views": 0,
+      "likes": 0,
+      "comments": 0,
+      "engagement_rate_pct": 0.0,
+      "analysis": {{
+        "title_score": 0,
+        "thumbnail_score": 0,
+        "seo_score": 0,
+        "content_score": 0,
+        "overall_score": 0.0,
+        "engagement_analysis": "",
+        "strengths": [],
+        "weaknesses": [],
+        "suggestions": []
+      }}
+    }}
   ],
-  "top_pick_script_outline": "A full structured script outline for the strongest idea: include intro hook, 4-6 main sections with approximate timestamps, transition lines, and a strong CTA. Be specific and actionable."
-}}"""
+  "overall_channel_insights": {{
+    "best_performing_videos": [],
+    "lowest_performing_videos": [],
+    "top_patterns": [],
+    "common_problems": [],
+    "content_category_performance": "",
+    "audience_behavior_insights": "",
+    "recommended_content_strategy": "",
+    "future_video_ideas": [],
+    "seo_improvement_suggestions": [],
+    "thumbnail_improvement_suggestions": [],
+    "recommendations": []
+  }}
+}}
+
+The video_analysis array MUST contain exactly {payload['total_videos']} items — one for every video provided.
+Analyze ALL of them completely."""
 
     return system_prompt, user_prompt
 
 
 def _clean_json(raw_text: str) -> str:
     """Strip accidental markdown code fences from the response."""
-    raw_text = re.sub(r"^```json\s*", "", raw_text)
-    raw_text = re.sub(r"^```\s*", "", raw_text)
-    raw_text = re.sub(r"\s*```$", "", raw_text).strip()
-    return raw_text
+    raw_text = re.sub(r"^```json\s*", "", raw_text, flags=re.MULTILINE)
+    raw_text = re.sub(r"^```\s*", "", raw_text, flags=re.MULTILINE)
+    raw_text = re.sub(r"\s*```$", "", raw_text.strip())
+    return raw_text.strip()
 
 
-def _validate_result(result: dict, provider_name: str) -> dict:
-    """Validate that the AI response contains all required keys."""
-    required_keys = [
-        "performance_insights", "title_patterns", "topic_clusters",
-        "content_gaps", "optimal_duration_seconds", "video_ideas", "top_pick_script_outline"
-    ]
+def _validate_result(result: dict, provider_name: str, expected_count: int) -> dict:
+    """Validate that the AI response contains all required keys and video count."""
+    required_keys = ["total_videos_analyzed", "video_analysis", "overall_channel_insights"]
     missing = [k for k in required_keys if k not in result]
     if missing:
         raise YTAnalysisServiceError(
             f"{provider_name} response missing required keys: {missing}"
         )
 
-    ideas = result.get("video_ideas", [])
-    if not isinstance(ideas, list) or len(ideas) == 0:
-        raise YTAnalysisServiceError(f"{provider_name} returned no video ideas.")
+    video_analysis = result.get("video_analysis", [])
+    if not isinstance(video_analysis, list) or len(video_analysis) == 0:
+        raise YTAnalysisServiceError(
+            f"{provider_name} returned no video analysis entries."
+        )
+
+    if len(video_analysis) < expected_count:
+        logger.warning(
+            f"{provider_name} returned {len(video_analysis)}/{expected_count} video analyses. "
+            "Some videos may have been skipped by the model."
+        )
 
     return result
 
@@ -172,7 +209,7 @@ def _call_claude(system_prompt: str, user_prompt: str) -> str:
     try:
         response = client.messages.create(
             model="claude-sonnet-4-5",
-            max_tokens=4096,
+            max_tokens=8192,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
         )
@@ -187,11 +224,8 @@ def _call_claude(system_prompt: str, user_prompt: str) -> str:
 def _call_gemini(system_prompt: str, user_prompt: str) -> str:
     """
     Call Google Gemini API via direct REST (no SDK required).
-    Uses the same approach as video_ai_analyzer.py for reliability.
     Falls back through model names: configured model → gemini-2.0-flash → gemini-1.5-flash.
     """
-    import requests as _requests
-
     api_key = current_app.config.get("GOOGLE_API_KEY", "")
     if not api_key:
         raise YTAnalysisServiceError(
@@ -203,22 +237,19 @@ def _call_gemini(system_prompt: str, user_prompt: str) -> str:
     ).rstrip("/")
     model = current_app.config.get("GEMINI_MODEL", "gemini-2.0-flash")
 
-    # Combine system + user prompt since REST API system_instruction
-    # is a top-level field in the request body
     headers = {"Content-Type": "application/json"}
     payload = {
         "system_instruction": {"parts": [{"text": system_prompt}]},
         "contents": [{"parts": [{"text": user_prompt}]}],
         "generationConfig": {
             "temperature": 0.7,
-            "maxOutputTokens": 4096,
+            "maxOutputTokens": 8192,
             "responseMimeType": "application/json",
         },
     }
 
-    # Try configured model, then known-good fallbacks
     models_to_try = [model, "gemini-2.0-flash", "gemini-1.5-flash"]
-    seen = set()
+    seen: set[str] = set()
     last_error = None
 
     for m in models_to_try:
@@ -227,7 +258,7 @@ def _call_gemini(system_prompt: str, user_prompt: str) -> str:
         seen.add(m)
         url = f"{base_url}/models/{m}:generateContent?key={api_key}"
         try:
-            res = _requests.post(url, headers=headers, json=payload, timeout=60)
+            res = _requests.post(url, headers=headers, json=payload, timeout=120)
             if res.status_code == 200:
                 data = res.json()
                 raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
@@ -238,7 +269,9 @@ def _call_gemini(system_prompt: str, user_prompt: str) -> str:
             last_error = str(e)
             logger.warning(f"Gemini model '{m}' request failed: {e}")
 
-    raise YTAnalysisServiceError(f"Gemini API call failed after all fallbacks. Last error: {last_error}")
+    raise YTAnalysisServiceError(
+        f"Gemini API call failed after all fallbacks. Last error: {last_error}"
+    )
 
 
 # ─── Public entry point ───────────────────────────────────────────────────────
@@ -250,35 +283,41 @@ def generate_channel_analysis(
 ) -> dict:
     """
     Send structured channel data to the selected AI provider.
-    Returns parsed JSON with performance_insights, title_patterns, topic_clusters,
-    content_gaps, optimal_duration_seconds, video_ideas (5), and top_pick_script_outline.
-
-    Args:
-        channel_title: Display name of the channel.
-        payload:       Condensed video performance data from build_analysis_payload().
-        provider:      AI provider to use — "claude" (default) or "gemini".
+    Returns parsed JSON with:
+      - total_videos_analyzed
+      - video_analysis: per-video breakdown for EVERY video
+      - overall_channel_insights: patterns, problems, recommendations
     """
-    provider = (provider or "claude").lower().strip()
+    provider = provider.lower().strip()
     if provider not in SUPPORTED_PROVIDERS:
         raise YTAnalysisServiceError(
-            f"Unsupported provider '{provider}'. Choose from: {', '.join(SUPPORTED_PROVIDERS)}"
+            f"Unsupported provider '{provider}'. Choose from: {SUPPORTED_PROVIDERS}"
         )
 
+    expected_count = payload.get("total_videos", 0)
     system_prompt, user_prompt = _build_prompts(channel_title, payload)
 
-    if provider == "gemini":
-        raw_text = _call_gemini(system_prompt, user_prompt)
-        provider_label = "Gemini"
+    if provider == "claude":
+        raw = _call_claude(system_prompt, user_prompt)
     else:
-        raw_text = _call_claude(system_prompt, user_prompt)
-        provider_label = "Claude"
+        raw = _call_gemini(system_prompt, user_prompt)
 
-    raw_text = _clean_json(raw_text)
-
+    cleaned = _clean_json(raw)
     try:
-        result = json.loads(raw_text)
-    except json.JSONDecodeError as e:
-        logger.error(f"{provider_label} returned invalid JSON: {raw_text[:500]}")
-        raise YTAnalysisServiceError(f"{provider_label} returned invalid JSON: {e}")
+        result = json.loads(cleaned)
+    except json.JSONDecodeError:
+        # Try to extract JSON object from response
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if match:
+            try:
+                result = json.loads(match.group())
+            except Exception:
+                raise YTAnalysisServiceError(
+                    f"Failed to parse JSON response from {provider}."
+                )
+        else:
+            raise YTAnalysisServiceError(
+                f"Failed to parse JSON response from {provider}."
+            )
 
-    return _validate_result(result, provider_label)
+    return _validate_result(result, provider, expected_count)
