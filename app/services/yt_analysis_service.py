@@ -21,24 +21,23 @@ class YTAnalysisServiceError(Exception):
 
 def build_analysis_payload(videos: list[dict], transcripts: dict[str, dict]) -> dict:
     """
-    Condense up to 50 videos into a compact structured summary to keep token
-    usage efficient. Sends full metadata for all videos but only transcript
-    excerpts for the top and bottom performers by view count.
+    Condense videos into a compact structured summary for AI analysis.
+    Videos are the last N most recent uploads (newest first from YouTube uploads playlist).
+    Scales top/bottom performer buckets dynamically based on actual count to avoid
+    duplication when a small count (e.g. 10) is selected.
     """
     if not videos:
         raise YTAnalysisServiceError("No video data provided for analysis.")
 
-    sorted_videos = sorted(videos, key=lambda v: v.get("view_count", 0), reverse=True)
-    top_10 = sorted_videos[:10]
-    bottom_10 = sorted_videos[-10:]
+    total = len(videos)
 
-    def summarize(v: dict) -> dict:
+    def summarize(v: dict, include_transcript: bool = True) -> dict:
         vid_id = v.get("video_id", "")
-        t_data = transcripts.get(vid_id, {})
+        t_data = transcripts.get(vid_id, {}) if include_transcript else {}
         raw_text = t_data.get("text") or ""
         transcript_excerpt = raw_text[:600].strip() if raw_text else ""
 
-        return {
+        entry = {
             "title": v.get("title", ""),
             "views": v.get("view_count", 0),
             "likes": v.get("like_count", 0),
@@ -46,14 +45,47 @@ def build_analysis_payload(videos: list[dict], transcripts: dict[str, dict]) -> 
             "duration_sec": v.get("duration_seconds", 0),
             "published_at": v["published_at"].isoformat() if v.get("published_at") else None,
             "tags": (v.get("tags") or [])[:10],
-            "transcript_excerpt": transcript_excerpt,
+        }
+        if include_transcript:
+            entry["transcript_excerpt"] = transcript_excerpt
+        return entry
+
+    # For small counts send all videos once; for larger counts split into
+    # top/bottom performers by view count (with transcript excerpts for best/worst only)
+    if total <= 15:
+        # All videos are "recent" — send them all with transcripts, no duplication
+        sorted_by_views = sorted(videos, key=lambda v: v.get("view_count", 0), reverse=True)
+        return {
+            "total_videos_analyzed": total,
+            "note": f"These are the {total} most recent uploads, sorted by view count below.",
+            "all_videos": [summarize(v) for v in sorted_by_views],
+            "all_titles": [
+                {
+                    "title": v.get("title", ""),
+                    "published_at": v["published_at"].isoformat() if v.get("published_at") else None,
+                }
+                for v in videos  # chronological order (newest first)
+            ],
         }
 
+    # Larger counts: split into top/bottom buckets (scale bucket to ~20% of total, min 5, max 15)
+    bucket_size = max(5, min(15, total // 5))
+    sorted_by_views = sorted(videos, key=lambda v: v.get("view_count", 0), reverse=True)
+    top_n = sorted_by_views[:bucket_size]
+    bottom_n = sorted_by_views[-bucket_size:]
+
     return {
-        "total_videos_analyzed": len(videos),
-        "top_performers": [summarize(v) for v in top_10],
-        "low_performers": [summarize(v) for v in bottom_10],
-        "all_titles": [v.get("title", "") for v in videos],
+        "total_videos_analyzed": total,
+        "note": f"These are the {total} most recent uploads. Top/bottom {bucket_size} shown by view count.",
+        "top_performers": [summarize(v) for v in top_n],
+        "low_performers": [summarize(v) for v in bottom_n],
+        "all_titles": [
+            {
+                "title": v.get("title", ""),
+                "published_at": v["published_at"].isoformat() if v.get("published_at") else None,
+            }
+            for v in videos  # chronological order (newest first)
+        ],
     }
 
 
