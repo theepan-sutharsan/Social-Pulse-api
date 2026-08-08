@@ -31,6 +31,9 @@ class User(db.Model):
     alerts = db.relationship(
         "Alert", backref="user", lazy=True, cascade="all, delete-orphan"
     )
+    video_analyses = db.relationship(
+        "VideoAnalysis", backref="user", lazy=True, cascade="all, delete-orphan"
+    )
 
     def set_password(self, plain_password: str):
         self.password = generate_password_hash(plain_password)

@@ -38,8 +38,7 @@ def get_tiktok_oauth_url():
     return account_controller.get_tiktok_oauth_url()
 
 
-@bp.route("/oauth-callback", methods=["POST"])
-@roles_required("admin", "member")
+@bp.route("/oauth-callback", methods=["GET", "POST"])
 def oauth_callback():
     return account_controller.oauth_callback()
 
