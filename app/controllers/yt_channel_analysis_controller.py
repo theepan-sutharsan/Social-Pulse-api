@@ -187,17 +187,29 @@ def start_analysis():
         # --- Step 5: Persist results ---
         run.status = "completed"
         run.videos_analyzed_count = len(videos)
+        suggestions = analysis_result.get("top_5_content_suggestions", [])
+        if not suggestions:
+            # Fallback if AI put future_video_ideas as simple strings
+            future_ideas = analysis_result.get("overall_channel_insights", {}).get("future_video_ideas", [])
+            suggestions = [
+                {"title": str(idea), "hook": "High-CTR hook based on channel data", "rationale": "Recommended content direction"}
+                for idea in future_ideas
+            ]
+
+        script_outline = analysis_result.get("top_pick_script_outline", "")
+
         run.analysis_summary = {
-            # New schema — per-video breakdown + overall insights
             "video_analysis": analysis_result.get("video_analysis", []),
             "overall_channel_insights": analysis_result.get("overall_channel_insights", {}),
+            "top_5_content_suggestions": suggestions,
+            "top_pick_script_outline": script_outline,
             "total_videos_analyzed": analysis_result.get("total_videos_analyzed", len(videos)),
             # Metadata
             "ai_provider": provider,
             "video_count_requested": video_count,
         }
-        run.generated_ideas = analysis_result.get("overall_channel_insights", {}).get("future_video_ideas", [])
-        run.script_outline = ""  # No longer generated; ideas are in overall_channel_insights
+        run.generated_ideas = suggestions
+        run.script_outline = script_outline
         run.completed_at = datetime.now(timezone.utc)
         channel_row.last_analyzed_at = datetime.now(timezone.utc)
         db.session.commit()
