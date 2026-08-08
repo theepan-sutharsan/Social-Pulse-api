@@ -109,7 +109,7 @@ For each video analyze:
 7. Weaknesses (list)
 8. Improvement suggestions (list)
 
-After analyzing ALL videos, provide overall channel insights.
+After analyzing ALL videos, provide overall channel insights AND top 5 content suggestions with a complete script outline for the top pick.
 
 Respond with ONLY this exact JSON structure (no markdown, no extra text):
 {{
@@ -149,7 +149,15 @@ Respond with ONLY this exact JSON structure (no markdown, no extra text):
     "seo_improvement_suggestions": [],
     "thumbnail_improvement_suggestions": [],
     "recommendations": []
-  }}
+  }},
+  "top_5_content_suggestions": [
+    {{"title": "Idea 1 title", "hook": "First 10 seconds hook script", "rationale": "Why this idea will perform well based on channel data"}},
+    {{"title": "Idea 2 title", "hook": "...", "rationale": "..."}},
+    {{"title": "Idea 3 title", "hook": "...", "rationale": "..."}},
+    {{"title": "Idea 4 title", "hook": "...", "rationale": "..."}},
+    {{"title": "Idea 5 title", "hook": "...", "rationale": "..."}}
+  ],
+  "top_pick_script_outline": "Detailed, step-by-step script outline for Idea 1 (including hook, main points with timestamps, transitions, call to action)."
 }}
 
 The video_analysis array MUST contain exactly {payload['total_videos']} items — one for every video provided.
