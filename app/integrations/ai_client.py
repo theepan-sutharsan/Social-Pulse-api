@@ -192,14 +192,23 @@ def generate_suggestion(suggestion_type: str, videos: list, account_name: str = 
             raise AIProviderError("Anthropic Claude API key is not configured. Please set ANTHROPIC_API_KEY in your api/.env file.")
         return _generate_claude_suggestion(prompt, anthropic_key, suggestion_type, account_name)
 
-    # Auto provider resolution:
+    # Automatic provider resolution: Gemini first, then Claude on any failure.
+    errors = []
     if google_key and google_key not in ["your-google-api-key", "your-gemini-api-key"]:
-        return _generate_gemini_suggestion(prompt, google_key, suggestion_type, account_name)
+        try:
+            return _generate_gemini_suggestion(prompt, google_key, suggestion_type, account_name)
+        except AIProviderError as exc:
+            errors.append(str(exc))
 
     if anthropic_key and anthropic_key != "your-anthropic-api-key":
-        return _generate_claude_suggestion(prompt, anthropic_key, suggestion_type, account_name)
+        try:
+            return _generate_claude_suggestion(prompt, anthropic_key, suggestion_type, account_name)
+        except AIProviderError as exc:
+            errors.append(str(exc))
 
-    raise AIProviderError("No valid AI Provider API key configured. Please set GOOGLE_API_KEY or ANTHROPIC_API_KEY in your api/.env file.")
+    if errors:
+        raise AIProviderError("All configured AI providers failed. " + " | ".join(errors))
+    raise AIProviderError("No valid AI provider API key is configured.")
 
 
 def _stub_suggestion(suggestion_type: str, account_name: str = "") -> dict:

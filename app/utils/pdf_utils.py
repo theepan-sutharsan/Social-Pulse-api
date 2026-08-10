@@ -3,6 +3,7 @@ Social Pulse API — PDF Utilities
 Uses reportlab for all PDF generation.
 """
 import io
+from xml.sax.saxutils import escape
 from flask import Response
 from reportlab.platypus import (
     SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
@@ -43,6 +44,17 @@ def _build_styles():
     return styles, title_style, header_style, body_style
 
 
+def _footer(canvas, doc):
+    canvas.saveState()
+    canvas.setStrokeColor(colors.HexColor("#e5e7eb"))
+    canvas.line(doc.leftMargin, 1.25 * cm, doc.pagesize[0] - doc.rightMargin, 1.25 * cm)
+    canvas.setFont("Helvetica", 8)
+    canvas.setFillColor(colors.HexColor("#64748b"))
+    canvas.drawString(doc.leftMargin, 0.8 * cm, "Social Pulse · YouTube Audience Intelligence")
+    canvas.drawRightString(doc.pagesize[0] - doc.rightMargin, 0.8 * cm, f"Page {doc.page}")
+    canvas.restoreState()
+
+
 def table_pdf_response(filename: str, title: str, headers: list, rows: list) -> Response:
     """
     Render a titled table PDF and return as a Flask attachment response.
@@ -65,7 +77,7 @@ def table_pdf_response(filename: str, title: str, headers: list, rows: list) -> 
     elements = []
 
     # Title
-    elements.append(Paragraph(title, title_style))
+    elements.append(Paragraph(escape(str(title)), title_style))
     elements.append(Spacer(1, 0.4 * cm))
 
     # Table data
@@ -91,7 +103,7 @@ def table_pdf_response(filename: str, title: str, headers: list, rows: list) -> 
         ("RIGHTPADDING", (0, 0), (-1, -1), 8),
     ]))
     elements.append(table)
-    doc.build(elements)
+    doc.build(elements, onFirstPage=_footer, onLaterPages=_footer)
 
     pdf_bytes = buffer.getvalue()
     buffer.close()
@@ -126,18 +138,18 @@ def document_pdf_response(filename: str, title: str, sections: list) -> Response
     elements = []
 
     # Title
-    elements.append(Paragraph(title, title_style))
+    elements.append(Paragraph(escape(str(title)), title_style))
     elements.append(Spacer(1, 0.5 * cm))
 
     for section in sections:
         heading = section.get("heading")
         if heading:
-            elements.append(Paragraph(heading, header_style))
+            elements.append(Paragraph(escape(str(heading)), header_style))
             elements.append(Spacer(1, 0.2 * cm))
 
         fields = section.get("fields", [])
         if fields:
-            field_data = [[Paragraph(f"<b>{label}</b>", body_style), Paragraph(str(value), body_style)]
+            field_data = [[Paragraph(f"<b>{escape(str(label))}</b>", body_style), Paragraph(escape(str(value)), body_style)]
                           for label, value in fields]
             field_table = Table(field_data, colWidths=[6 * cm, 11 * cm])
             field_table.setStyle(TableStyle([
@@ -151,10 +163,10 @@ def document_pdf_response(filename: str, title: str, sections: list) -> Response
 
         body = section.get("body")
         if body:
-            elements.append(Paragraph(str(body), body_style))
+            elements.append(Paragraph(escape(str(body)), body_style))
             elements.append(Spacer(1, 0.4 * cm))
 
-    doc.build(elements)
+    doc.build(elements, onFirstPage=_footer, onLaterPages=_footer)
     pdf_bytes = buffer.getvalue()
     buffer.close()
 

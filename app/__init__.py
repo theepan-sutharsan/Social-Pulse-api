@@ -51,6 +51,7 @@ def create_app(config_class=Config):
             post_history_model,
             video_analysis_model,
             yt_channel_analysis_model,
+            youtube_audience_model,
         )
         try:
             db.create_all()

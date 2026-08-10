@@ -13,7 +13,7 @@ from flask import current_app
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_PROVIDERS = ("claude", "gemini")
+SUPPORTED_PROVIDERS = ("gemini", "claude")
 
 
 class YTAnalysisServiceError(Exception):
@@ -198,6 +198,27 @@ def _validate_result(result: dict, provider_name: str, expected_count: int) -> d
     return result
 
 
+def _parse_result(raw: str, provider_name: str, expected_count: int) -> dict:
+    """Parse and validate a provider response before accepting it."""
+    cleaned = _clean_json(raw)
+    try:
+        result = json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if not match:
+            raise YTAnalysisServiceError(
+                f"Failed to parse JSON response from {provider_name}."
+            )
+        try:
+            result = json.loads(match.group())
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise YTAnalysisServiceError(
+                f"Failed to parse JSON response from {provider_name}."
+            ) from exc
+
+    return _validate_result(result, provider_name, expected_count)
+
+
 # ─── Claude provider ─────────────────────────────────────────────────────────
 
 def _call_claude(system_prompt: str, user_prompt: str) -> str:
@@ -274,8 +295,9 @@ def _call_gemini(system_prompt: str, user_prompt: str) -> str:
             last_error = f"HTTP {res.status_code}: {res.text[:300]}"
             logger.warning(f"Gemini model '{m}' returned {res.status_code}, trying next...")
         except Exception as e:
-            last_error = str(e)
-            logger.warning(f"Gemini model '{m}' request failed: {e}")
+            safe_error = str(e).replace(api_key, "[redacted]")
+            last_error = safe_error
+            logger.warning("Gemini model '%s' request failed: %s", m, safe_error)
 
     raise YTAnalysisServiceError(
         f"Gemini API call failed after all fallbacks. Last error: {last_error}"
@@ -287,8 +309,8 @@ def _call_gemini(system_prompt: str, user_prompt: str) -> str:
 def generate_channel_analysis(
     channel_title: str,
     payload: dict,
-    provider: str = "claude",
-) -> dict:
+    provider: str = "gemini",
+) -> tuple[dict, str]:
     """
     Send structured channel data to the selected AI provider.
     Returns parsed JSON with:
@@ -305,27 +327,27 @@ def generate_channel_analysis(
     expected_count = payload.get("total_videos", 0)
     system_prompt, user_prompt = _build_prompts(channel_title, payload)
 
-    if provider == "claude":
-        raw = _call_claude(system_prompt, user_prompt)
-    else:
-        raw = _call_gemini(system_prompt, user_prompt)
+    provider_order = [provider] + [p for p in SUPPORTED_PROVIDERS if p != provider]
+    errors: list[str] = []
 
-    cleaned = _clean_json(raw)
-    try:
-        result = json.loads(cleaned)
-    except json.JSONDecodeError:
-        # Try to extract JSON object from response
-        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-        if match:
-            try:
-                result = json.loads(match.group())
-            except Exception:
-                raise YTAnalysisServiceError(
-                    f"Failed to parse JSON response from {provider}."
-                )
-        else:
-            raise YTAnalysisServiceError(
-                f"Failed to parse JSON response from {provider}."
+    for candidate in provider_order:
+        try:
+            raw = (
+                _call_gemini(system_prompt, user_prompt)
+                if candidate == "gemini"
+                else _call_claude(system_prompt, user_prompt)
+            )
+            result = _parse_result(raw, candidate, expected_count)
+            return result, candidate
+        except Exception as exc:
+            safe_error = str(exc)
+            errors.append(f"{candidate}: {safe_error}")
+            logger.warning(
+                "Channel analysis provider '%s' failed; trying fallback: %s",
+                candidate,
+                safe_error,
             )
 
-    return _validate_result(result, provider, expected_count)
+    raise YTAnalysisServiceError(
+        "All configured AI providers failed. " + " | ".join(errors)
+    )

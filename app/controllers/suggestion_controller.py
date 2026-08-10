@@ -76,11 +76,15 @@ def generate_suggestion():
                         "comments": latest_m.comments, "shares": latest_m.shares})
         video_dicts.append(vd)
 
+    # API-only override retained for integrations and offline tests. The frontend
+    # intentionally sends no provider, so normal requests use Gemini-first auto routing.
     provider = data.get("provider")
 
     # Call AI
     try:
-        output = ai_client.generate_suggestion(suggestion_type, video_dicts, account_name, provider=provider)
+        output = ai_client.generate_suggestion(
+            suggestion_type, video_dicts, account_name, provider=provider
+        )
     except ai_client.AIProviderError as e:
         return jsonify({"error": str(e)}), 400
 

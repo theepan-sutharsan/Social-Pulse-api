@@ -42,8 +42,6 @@ def analyze_video():
 
     data = request.get_json(silent=True) or {}
     youtube_url = (data.get("youtube_url") or "").strip()
-    provider = (data.get("provider") or "auto").strip()
-
     if not youtube_url:
         return jsonify({"error": "youtube_url parameter is required."}), 400
 
@@ -84,8 +82,8 @@ def analyze_video():
 
         # ── Step 3: AI Content & Thumbnail Vision Analysis ──
         try:
-            content_analysis = analyze_video_content(transcript, metadata.get("title", "Untitled Video"), provider=provider)
-            thumbnail_analysis = analyze_video_thumbnail(metadata.get("thumbnail_url", ""), provider=provider)
+            content_analysis = analyze_video_content(transcript, metadata.get("title", "Untitled Video"))
+            thumbnail_analysis = analyze_video_thumbnail(metadata.get("thumbnail_url", ""))
         except AIAnalysisError as e:
             return jsonify({"error": str(e)}), 500
 

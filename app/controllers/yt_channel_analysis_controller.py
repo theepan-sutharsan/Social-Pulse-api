@@ -28,7 +28,6 @@ def start_analysis():
     POST /api/yt-channel-analysis/start
     Payload: {
       "channel_url": "https://youtube.com/@handle",
-      "provider": "claude" | "gemini",
       "video_count": 10 | 20 | 30 | 50  (default: 50)
     }
 
@@ -36,7 +35,7 @@ def start_analysis():
     1. Resolves channel via YouTube Data API
     2. Fetches last N video metadata (user-chosen count)
     3. Fetches/caches transcripts for all videos
-    4. Calls the selected AI provider (Claude or Gemini) for analysis + idea generation
+    4. Calls Gemini first, with automatic fallback to another configured provider
     5. Persists results to DB
     6. Returns full analysis result
     """
@@ -49,7 +48,7 @@ def start_analysis():
     if not channel_url:
         return jsonify({"error": "channel_url is required."}), 400
 
-    provider = (data.get("provider") or "claude").lower().strip()
+    provider = (data.get("provider") or "gemini").lower().strip()
     if provider not in ("claude", "gemini"):
         return jsonify({"error": f"Unsupported provider '{provider}'. Choose 'claude' or 'gemini'."}), 400
 
@@ -178,7 +177,7 @@ def start_analysis():
         # --- Step 4: Build payload + call AI provider ---
         try:
             payload = build_analysis_payload(videos, all_transcripts)
-            analysis_result = generate_channel_analysis(
+            analysis_result, provider_used = generate_channel_analysis(
                 channel_meta["channel_title"], payload, provider=provider
             )
         except YTAnalysisServiceError as e:
@@ -205,7 +204,7 @@ def start_analysis():
             "top_pick_script_outline": script_outline,
             "total_videos_analyzed": analysis_result.get("total_videos_analyzed", len(videos)),
             # Metadata
-            "ai_provider": provider,
+            "ai_provider": provider_used,
             "video_count_requested": video_count,
         }
         run.generated_ideas = suggestions

@@ -54,3 +54,8 @@ class Config:
     GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
     GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
     ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
+
+    # YouTube audience-intelligence processing limits.  The worker contract
+    # remains stage-based so it can move to Celery without changing the API.
+    AUDIENCE_MAX_COMMENTS = int(os.getenv("AUDIENCE_MAX_COMMENTS", "10000"))
+    AUDIENCE_COMMENT_BATCH_SIZE = int(os.getenv("AUDIENCE_COMMENT_BATCH_SIZE", "150"))
