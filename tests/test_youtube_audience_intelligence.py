@@ -12,6 +12,7 @@ from app.extensions import db
 from app.models.user_model import User
 from app.models.video_model import Video
 from app.models.youtube_audience_model import AudienceAnalysisRun
+from app.models.youtube_audience_model import AudienceComment
 from app.services.audience_intelligence_service import build_report, classify_comment
 from app.services.audience_ai_service import _validate_batch
 from app.services import audience_job_service
@@ -177,6 +178,27 @@ def test_worker_completes_when_provider_omits_optional_fields(app, monkeypatch):
         saved = AudienceAnalysisRun.query.get(run.id)
         assert saved.status == "COMPLETED", saved.error_message
         assert saved.error_message is None
+
+
+def test_comment_upsert_deduplicates_repeated_youtube_ids(app):
+    with app.app_context():
+        video = Video(platform="youtube", external_id="duplicate-video")
+        db.session.add(video)
+        db.session.commit()
+        rows = [
+            {"comment_id": "duplicate-comment", "text": "First copy", "likes": 1, "replies": 0},
+            {"comment_id": "duplicate-comment", "text": "Latest copy", "likes": 4, "replies": 2},
+        ]
+
+        stored = audience_job_service._upsert_comments(video, rows)
+
+        assert len(stored) == 1
+        assert AudienceComment.query.filter_by(
+            video_fk_id=video.id,
+            external_comment_id="duplicate-comment",
+        ).count() == 1
+        assert stored[0].original_text == "Latest copy"
+        assert stored[0].like_count == 4
 
 
 def test_comment_fetch_follows_reply_pages(app, monkeypatch):
