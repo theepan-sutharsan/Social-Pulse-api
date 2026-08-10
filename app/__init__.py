@@ -3,6 +3,7 @@ Social Pulse API — Application Factory
 """
 import os
 from flask import Flask, jsonify
+from flask_cors import CORS
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from dotenv import load_dotenv
 
@@ -15,6 +16,19 @@ from app.extensions import db, jwt
 def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
+
+    raw_cors_origins = app.config.get("CORS_ORIGINS", "*")
+    cors_origins = (
+        "*"
+        if raw_cors_origins in (None, "", "*")
+        else [origin.strip().rstrip("/") for origin in str(raw_cors_origins).split(",") if origin.strip()]
+    )
+    CORS(
+        app,
+        resources={r"/api/*": {"origins": cors_origins}},
+        allow_headers=["Content-Type", "Authorization"],
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    )
 
     # Initialize extensions
     db.init_app(app)
@@ -78,5 +92,9 @@ def create_app(config_class=Config):
     @app.errorhandler(405)
     def handle_method_not_allowed(e):
         return jsonify({"error": "Method not allowed."}), 405
+
+    @app.get("/health")
+    def health_check():
+        return jsonify({"status": "ok"}), 200
 
     return app
