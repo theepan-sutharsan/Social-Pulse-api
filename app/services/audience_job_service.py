@@ -9,6 +9,8 @@ from __future__ import annotations
 import math
 from concurrent.futures import ThreadPoolExecutor
 
+from sqlalchemy.exc import IntegrityError
+
 from app.extensions import db
 from app.models.video_model import Video
 from app.models.video_metric_model import VideoMetric
@@ -63,19 +65,24 @@ def _upsert_video(run: AudienceAnalysisRun, metadata: dict) -> Video:
 
 
 def _upsert_comments(video: Video, rows: list[dict]) -> list[AudienceComment]:
+    # YouTube reply pagination can repeat an ID, and two analyses for the same
+    # video can be running at the same time. Collapse the fetched payload first
+    # so one run never queues duplicate INSERTs for the unique key.
+    unique_rows: dict[str, dict] = {}
+    for row in rows:
+        external_id = str(row.get("comment_id") or "").strip()
+        text = (row.get("text") or "").strip()
+        if external_id and text:
+            unique_rows[external_id] = row
+
     existing = {
         row.external_comment_id: row
         for row in AudienceComment.query.filter_by(video_fk_id=video.id).all()
     }
     stored = []
-    for row in rows:
+
+    def apply_row(comment: AudienceComment, row: dict):
         text = (row.get("text") or "").strip()
-        if not text:
-            continue
-        comment = existing.get(row.get("comment_id"))
-        if not comment:
-            comment = AudienceComment(video_fk_id=video.id, external_comment_id=row.get("comment_id"))
-            db.session.add(comment)
         comment.parent_external_comment_id = row.get("parent_comment_id")
         comment.author_name = row.get("author_name")
         comment.author_channel_id = row.get("author_channel_id")
@@ -86,8 +93,36 @@ def _upsert_comments(video: Video, rows: list[dict]) -> list[AudienceComment]:
         comment.published_at = row.get("published_at")
         comment.updated_at = row.get("updated_at")
         comment.last_seen_at = utc_now()
+
+    for external_id, row in unique_rows.items():
+        comment = existing.get(external_id)
+        if comment is None:
+            comment = AudienceComment(video_fk_id=video.id, external_comment_id=external_id)
+            db.session.add(comment)
+            # Keep new rows in the in-memory map too; this prevents duplicate
+            # objects when the same ID appeared more than once in the payload.
+            existing[external_id] = comment
+        apply_row(comment, row)
         stored.append(comment)
-    db.session.commit()
+
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # Another worker may have inserted one of these IDs between our initial
+        # SELECT and COMMIT. Re-read after rollback and update the winning row.
+        db.session.rollback()
+        stored = []
+        for external_id, row in unique_rows.items():
+            comment = AudienceComment.query.filter_by(
+                video_fk_id=video.id,
+                external_comment_id=external_id,
+            ).first()
+            if comment is None:
+                comment = AudienceComment(video_fk_id=video.id, external_comment_id=external_id)
+                db.session.add(comment)
+            apply_row(comment, row)
+            stored.append(comment)
+        db.session.commit()
     return stored
 
 
