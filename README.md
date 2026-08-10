@@ -38,6 +38,11 @@ python run.py
 # API runs at http://127.0.0.1:5000
 ```
 
+For Railway, use the included `Procfile` (or set the service start command to
+`gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 900 run:app`).
+Set `CORS_ORIGINS` to the HTTPS Vercel origin and configure the Vercel build
+variable `NEXT_PUBLIC_API_URL` with the HTTPS Railway public URL.
+
 ### 6. Seed Demo Data
 ```bash
 python seed.py

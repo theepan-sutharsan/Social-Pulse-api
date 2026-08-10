@@ -39,6 +39,10 @@ class Config:
     # Flask
     DEBUG = os.getenv("FLASK_DEBUG", "0") == "1"
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-flask-secret")
+    # Comma-separated browser origins for Flask-CORS. Keep `*` as the default
+    # for backwards-compatible local development; Railway should set this to
+    # the Vercel deployment origin(s) in production.
+    CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 
     # Platform API keys
     YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
