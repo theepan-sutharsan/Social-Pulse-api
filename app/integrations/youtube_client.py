@@ -70,9 +70,12 @@ def _stub_channel_info(channel_id: str) -> dict:
     return {
         "channel_id": clean_id,
         "display_name": display_name,
+        "description": "Demo data is shown because YOUTUBE_API_KEY is not configured.",
         "subscriber_count": 10000,
+        "total_views": 0,
         "video_count": 50,
         "thumbnail": "",
+        "data_source": "stub",
     }
 
 
@@ -130,11 +133,11 @@ def get_channel_info(channel_id: str) -> dict:
         url = f"{YOUTUBE_API_BASE}/channels"
         
         if target_type == "id":
-            params = {"part": "snippet,statistics", "id": clean_val, "key": api_key}
+            params = {"part": "snippet,statistics,brandingSettings", "id": clean_val, "key": api_key}
         elif target_type == "handle":
-            params = {"part": "snippet,statistics", "forHandle": clean_val, "key": api_key}
+            params = {"part": "snippet,statistics,brandingSettings", "forHandle": clean_val, "key": api_key}
         else:
-            params = {"part": "snippet,statistics", "forUsername": clean_val.lstrip("@"), "key": api_key}
+            params = {"part": "snippet,statistics,brandingSettings", "forUsername": clean_val.lstrip("@"), "key": api_key}
 
         resp = requests.get(url, params=params, timeout=10)
         resp.raise_for_status()
@@ -150,7 +153,7 @@ def get_channel_info(channel_id: str) -> dict:
         
         # Fallback query using forUsername
         if not items and target_type == "handle":
-            params_username = {"part": "snippet,statistics", "forUsername": clean_val.lstrip("@"), "key": api_key}
+            params_username = {"part": "snippet,statistics,brandingSettings", "forUsername": clean_val.lstrip("@"), "key": api_key}
             resp = requests.get(url, params=params_username, timeout=10)
             if resp.status_code == 200:
                 items = resp.json().get("items", [])
@@ -161,12 +164,18 @@ def get_channel_info(channel_id: str) -> dict:
         item = items[0]
         snippet = item.get("snippet", {})
         stats = item.get("statistics", {})
+        branding = item.get("brandingSettings", {}).get("image", {})
         return {
             "channel_id": item["id"],
             "display_name": snippet.get("title", ""),
+            "description": snippet.get("description", ""),
             "subscriber_count": int(stats.get("subscriberCount", 0)),
+            "total_views": int(stats.get("viewCount", 0)),
             "video_count": int(stats.get("videoCount", 0)),
             "thumbnail": snippet.get("thumbnails", {}).get("default", {}).get("url", ""),
+            "banner_url": branding.get("bannerExternalUrl", ""),
+            "country": snippet.get("country"),
+            "data_source": "youtube_api",
         }
     except Exception as e:
         current_app.logger.error(f"YouTube channel fetch error: {e}")
