@@ -10,6 +10,11 @@ os.environ.setdefault("FLASK_DEBUG", "0")
 from app import create_app
 from app.extensions import db as _db
 from app.services import growth_engine, revenue_engine, prediction_engine, viral_score_engine, seo_engine, channel_analytics_engine, historical_tracker
+from app.models.user_model import User
+from app.models.tracked_channel_model import TrackedChannel
+from app.models.video_model import Video
+from app.models.video_metric_model import VideoMetric
+from app.controllers import tracked_channel_controller
 
 
 @pytest.fixture(scope="session")
@@ -152,3 +157,56 @@ def test_daily_snapshot_worker(app):
     with app.app_context():
         res = historical_tracker.run_daily_snapshot()
         assert res["status"] == "success"
+
+
+def test_tracked_channel_sync_persists_socialblade_metrics_and_videos(app, monkeypatch):
+    with app.app_context():
+        user = User(email="socialblade-sync@test.com", password="password", full_name="SocialBlade Sync")
+        db_session = _db.session
+        db_session.add(user)
+        db_session.flush()
+        channel = TrackedChannel(
+            added_by_id=user.id,
+            platform="youtube",
+            channel_id="UC_test_channel",
+            channel_name="Before sync",
+        )
+        db_session.add(channel)
+        db_session.commit()
+
+        monkeypatch.setattr(tracked_channel_controller.youtube_client, "get_channel_info", lambda _identifier: {
+            "channel_id": "UC_test_channel",
+            "display_name": "Synced channel",
+            "description": "A real channel description",
+            "subscriber_count": 1234,
+            "total_views": 987654,
+            "video_count": 1,
+            "thumbnail": "https://example.com/avatar.jpg",
+            "banner_url": "https://example.com/banner.jpg",
+            "country": "US",
+        })
+        monkeypatch.setattr(tracked_channel_controller.youtube_client, "get_channel_videos", lambda *_args, **_kwargs: [{
+            "external_id": "video_1",
+            "title": "A synced video",
+            "description": "Description",
+            "tags": ["test"],
+            "thumbnail_url": "https://example.com/video.jpg",
+            "duration_seconds": 120,
+            "published_at": "2026-08-09T10:00:00",
+            "views": 5000,
+            "likes": 250,
+            "comments": 30,
+        }])
+
+        fetched, created = tracked_channel_controller._sync_channel_internal(channel)
+        db_session.expire_all()
+        synced = TrackedChannel.query.get(channel.id)
+        video = Video.query.filter_by(external_id="video_1").one()
+
+        assert (fetched, created) == (1, 1)
+        assert synced.channel_name == "Synced channel"
+        assert synced.total_views == 987654
+        assert synced.video_count == 1
+        assert synced.banner_url == "https://example.com/banner.jpg"
+        assert video.tracked_channel_id == synced.id
+        assert VideoMetric.query.filter_by(video_id=video.id).count() == 1

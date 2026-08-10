@@ -2,7 +2,7 @@
 Social Pulse API — Tracked Channel Controller
 Admin-only management of YouTube competitor/niche channels.
 """
-from flask import jsonify, request
+from flask import current_app, jsonify, request
 from flask_jwt_extended import get_current_user
 from app.extensions import db
 from app.models.tracked_channel_model import TrackedChannel
@@ -43,12 +43,18 @@ def _sync_channel_internal(channel):
     try:
         info = youtube_client.get_channel_info(channel.channel_id)
         if info:
+            channel.channel_name = info.get("display_name") or channel.channel_name
+            channel.description = info.get("description") or channel.description
             channel.subscriber_count = info.get("subscriber_count", channel.subscriber_count or 0)
             channel.total_views = info.get("total_views", channel.total_views or 0)
             if info.get("video_count"):
                 channel.total_videos_count = info.get("video_count")
             if info.get("thumbnail"):
                 channel.profile_image = info.get("thumbnail")
+            if info.get("banner_url"):
+                channel.banner_url = info.get("banner_url")
+            if info.get("country"):
+                channel.country = info.get("country")
 
         from app.models.channel_history_model import ChannelHistory
         from app.models.video_history_model import VideoHistory
@@ -76,13 +82,13 @@ def _sync_channel_internal(channel):
                     pub_at = None
 
             dur = rv.get("duration_seconds") or 0
-            is_short = (dur > 0 and dur <= 60)
 
             if existing:
                 video = existing
-                video.category = rv.get("category", video.category)
-                video.live_status = rv.get("live_status", video.live_status)
-                video.is_short = is_short
+                # Keep this sync compatible with the canonical Video model.
+                # Category/live-status/short flags are not persisted fields here.
+                if not video.tracked_channel_id:
+                    video.tracked_channel_id = channel.id
             else:
                 video = Video(
                     tracked_channel_id=channel.id,
@@ -93,9 +99,6 @@ def _sync_channel_internal(channel):
                     tags=rv.get("tags", []),
                     thumbnail_url=rv.get("thumbnail_url", ""),
                     duration_seconds=dur,
-                    category=rv.get("category"),
-                    live_status=rv.get("live_status", "none"),
-                    is_short=is_short,
                     published_at=pub_at,
                     fetched_at=utc_now(),
                 )
@@ -127,6 +130,7 @@ def _sync_channel_internal(channel):
         return len(raw_videos), created
     except Exception as e:
         db.session.rollback()
+        current_app.logger.exception("Tracked channel sync failed for %s", channel.channel_id)
         return 0, 0
 
 

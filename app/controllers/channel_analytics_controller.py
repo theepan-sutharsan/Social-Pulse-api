@@ -67,6 +67,8 @@ def get_channel_detail(channel_id):
             "total_views": ch.get("total_views", 0),
             "video_count": ch.get("video_count", 0),
             "profile_image": ch.get("thumbnail"),
+            "banner_url": ch.get("banner_url"),
+            "data_source": ch.get("data_source", "youtube_api"),
         }
         videos = [v for v in youtube_client.get_channel_videos(ch.get("channel_id"), max_results=50)]
         history = []
