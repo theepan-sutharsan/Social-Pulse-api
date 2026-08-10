@@ -87,6 +87,13 @@ def _validate_batch(value: dict, expected_ids: set[str]) -> dict[str, dict]:
             "spam": bool(row.get("spam")),
             "toxic": bool(row.get("toxic")),
             "sarcastic": bool(row.get("sarcastic")),
+            # These fields are requested in the prompt but are optional in
+            # real provider responses. Normalize them here so the worker can
+            # persist every valid classification without raising KeyError.
+            "toxicity_severity": row.get("toxicity_severity"),
+            "bot_signal": row.get("bot_signal") or (
+                "Suspicious" if row.get("spam") else "Likely Organic"
+            ),
             "quality_score": max(0, min(100, quality)),
             "confidence": max(0, min(0.99, confidence)),
             "evidence": row.get("evidence") if isinstance(row.get("evidence"), dict) else {},
