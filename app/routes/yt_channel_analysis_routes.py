@@ -24,3 +24,9 @@ def get_history():
 @roles_required("admin", "member")
 def get_run(run_id: int):
     return yt_channel_analysis_controller.get_analysis_run(run_id)
+
+
+@bp.route("/<int:run_id>", methods=["DELETE"])
+@roles_required("admin", "member")
+def delete_run(run_id: int):
+    return yt_channel_analysis_controller.delete_analysis_run(run_id)
