@@ -20,6 +20,12 @@ def get_history():
     return video_analysis_controller.get_history()
 
 
+@bp.route("/transcript", methods=["POST"])
+@roles_required("admin", "member")
+def get_transcript():
+    return video_analysis_controller.get_transcript()
+
+
 @bp.route("/<int:analysis_id>", methods=["GET"])
 @roles_required("admin", "member")
 def get_analysis_detail(analysis_id: int):
