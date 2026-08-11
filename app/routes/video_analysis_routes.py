@@ -30,3 +30,9 @@ def get_transcript():
 @roles_required("admin", "member")
 def get_analysis_detail(analysis_id: int):
     return video_analysis_controller.get_analysis_detail(analysis_id)
+
+
+@bp.route("/<int:analysis_id>", methods=["DELETE"])
+@roles_required("admin", "member")
+def delete_analysis(analysis_id: int):
+    return video_analysis_controller.delete_analysis(analysis_id)

@@ -201,3 +201,30 @@ def get_analysis_detail(analysis_id: int):
     return jsonify({
         "analysis": analysis.to_dict(),
     }), 200
+
+
+def delete_analysis(analysis_id: int):
+    """
+    DELETE /api/video-analysis/<int:analysis_id>
+    Deletes a saved analysis owned by the logged-in user.
+    """
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Unauthorized user."}), 401
+
+    analysis = VideoAnalysis.query.get(analysis_id)
+    if not analysis:
+        return jsonify({"error": "Video analysis not found."}), 404
+
+    if user.role != "admin" and analysis.user_id != user.id:
+        return jsonify({"error": "Forbidden. Access denied."}), 403
+
+    try:
+        db.session.delete(analysis)
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        logger.exception("Failed to delete video analysis %s", analysis_id)
+        return jsonify({"error": f"Delete failed: {str(exc)}"}), 500
+
+    return jsonify({"message": "Video analysis deleted."}), 200
