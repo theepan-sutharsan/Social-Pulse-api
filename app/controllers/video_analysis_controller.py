@@ -20,7 +20,9 @@ from app.services.video_downloader import (
 from app.services.transcriber import (
     transcribe_audio,
     get_youtube_transcript,
+    fetch_youtube_transcript_only,
     TranscriptionError,
+    TranscriptFetchError,
 )
 from app.services.video_ai_analyzer import (
     analyze_video_content,
@@ -122,6 +124,46 @@ def analyze_video():
                 shutil.rmtree(temp_dir, ignore_errors=True)
             except Exception:
                 pass
+
+
+def get_transcript():
+    """
+    POST /api/video-analysis/transcript
+    Fetches YouTube captions only using youtube-transcript-api.
+
+    Unlike the full analysis endpoint, this route never downloads audio and
+    never falls back to Whisper.  It is intended for the Video Transcript tab.
+    """
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Unauthorized user."}), 401
+
+    data = request.get_json(silent=True) or {}
+    youtube_url = (data.get("youtube_url") or "").strip()
+    if not youtube_url:
+        return jsonify({"error": "youtube_url parameter is required."}), 400
+
+    video_id = extract_video_id(youtube_url)
+    if not video_id:
+        return jsonify({"error": "Please enter a valid YouTube video URL."}), 400
+
+    try:
+        result = fetch_youtube_transcript_only(video_id)
+    except TranscriptFetchError as exc:
+        return jsonify({"error": str(exc)}), 422
+    except Exception as exc:
+        logger.exception("Unexpected transcript-only error for %s", video_id)
+        return jsonify({"error": "Unable to fetch the YouTube transcript."}), 500
+
+    return jsonify({
+        "transcript": {
+            "video_id": video_id,
+            "transcript": result["text"],
+            "language": result.get("language"),
+            "source": "youtube_transcript_api",
+            "segments": result.get("segments", []),
+        }
+    }), 200
 
 
 def get_history():
