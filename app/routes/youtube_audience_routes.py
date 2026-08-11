@@ -32,6 +32,12 @@ def run_detail(run_id: int):
     return controller.get_run(run_id)
 
 
+@bp.route("/runs/<int:run_id>", methods=["DELETE"])
+@roles_required("admin", "member")
+def delete_run(run_id: int):
+    return controller.delete_run(run_id)
+
+
 @bp.route("/runs/<int:run_id>/comments", methods=["GET"])
 @roles_required("admin", "member")
 def comments(run_id: int):

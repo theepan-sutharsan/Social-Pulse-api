@@ -270,3 +270,27 @@ def get_analysis_history():
         })
 
     return jsonify({"count": len(results), "history": results}), 200
+
+
+def delete_analysis_run(run_id: int):
+    """DELETE /api/yt-channel-analysis/<int:run_id>"""
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Unauthorized user."}), 401
+
+    run = YTChannelAnalysisRun.query.get(run_id)
+    if not run:
+        return jsonify({"error": "Analysis run not found."}), 404
+
+    if user.role != "admin" and run.user_id != user.id:
+        return jsonify({"error": "Forbidden. Access denied."}), 403
+
+    try:
+        db.session.delete(run)
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        logger.exception("Failed to delete YouTube channel analysis run %s", run_id)
+        return jsonify({"error": f"Delete failed: {str(exc)}"}), 500
+
+    return jsonify({"message": "Analysis run deleted."}), 200

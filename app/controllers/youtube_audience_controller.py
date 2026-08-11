@@ -113,6 +113,21 @@ def get_run(run_id: int):
     return jsonify({"run": run.to_dict(include_report=True)}), 200
 
 
+def delete_run(run_id: int):
+    run, error = _owned_run(run_id)
+    if error:
+        return error
+
+    try:
+        db.session.delete(run)
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"error": f"Delete failed: {str(exc)}"}), 500
+
+    return jsonify({"message": "Audience analysis run deleted."}), 200
+
+
 def get_history():
     user = _user()
     if not user:
