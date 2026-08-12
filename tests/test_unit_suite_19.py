@@ -8,4 +8,4 @@ def test_unit_assertion_19_b():
     assert str(19) == "19"
 
 def test_unit_assertion_19_c():
-    assert len("SocialPulse_19") == 13
+    assert len("SocialPulse_19") == 14
