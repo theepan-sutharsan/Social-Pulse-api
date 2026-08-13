@@ -43,6 +43,10 @@ For Railway, use the included `Procfile` (or set the service start command to
 Set `CORS_ORIGINS` to the HTTPS Vercel origin and configure the Vercel build
 variable `NEXT_PUBLIC_API_URL` with the HTTPS Railway public URL.
 
+Audio transcription defaults to the `small` Faster-Whisper model for better
+Tamil accuracy. Set `WHISPER_MODEL=medium` when the deployment has enough CPU
+and memory for quality-first transcription.
+
 ### 6. Seed Demo Data
 ```bash
 python seed.py

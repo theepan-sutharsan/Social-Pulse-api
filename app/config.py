@@ -67,6 +67,7 @@ class Config:
     GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
     GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
     ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
+    WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
 
     # YouTube audience-intelligence processing limits.  The worker contract
     # remains stage-based so it can move to Celery without changing the API.
