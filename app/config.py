@@ -39,6 +39,15 @@ class Config:
     # Flask
     DEBUG = os.getenv("FLASK_DEBUG", "0") == "1"
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-flask-secret")
+    FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    PASSWORD_RESET_TOKEN_MAX_AGE = int(os.getenv("PASSWORD_RESET_TOKEN_MAX_AGE", "3600"))
+    MAIL_SERVER = os.getenv("MAIL_SERVER", "")
+    MAIL_PORT = int(os.getenv("MAIL_PORT", "587"))
+    MAIL_USERNAME = os.getenv("MAIL_USERNAME", "")
+    MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
+    MAIL_DEFAULT_SENDER = os.getenv("MAIL_DEFAULT_SENDER", "")
+    MAIL_USE_TLS = os.getenv("MAIL_USE_TLS", "1") == "1"
+    MAIL_USE_SSL = os.getenv("MAIL_USE_SSL", "0") == "1"
     # Comma-separated browser origins for Flask-CORS. Keep `*` as the default
     # for backwards-compatible local development; Railway should set this to
     # the Vercel deployment origin(s) in production.

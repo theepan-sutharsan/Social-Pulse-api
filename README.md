@@ -63,6 +63,8 @@ pytest tests/ -v
 |--------|-------|--------|
 | POST | `/api/auth/register` | Public |
 | POST | `/api/auth/login` | Public |
+| POST | `/api/auth/forgot-password` | Public |
+| POST | `/api/auth/reset-password` | Public |
 | GET | `/api/auth/profile` | Authenticated |
 | PUT | `/api/auth/profile` | Authenticated |
 | GET | `/api/accounts` | Member/Admin |

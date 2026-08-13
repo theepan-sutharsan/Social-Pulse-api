@@ -3,6 +3,7 @@ Social Pulse API — Auth Tests
 """
 import pytest
 import os
+from urllib.parse import parse_qs, urlparse
 os.environ.setdefault("DB_NAME", "social_pulse_test")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
 os.environ.setdefault("FLASK_DEBUG", "0")
@@ -103,6 +104,27 @@ def test_login_wrong_password(client):
         "password": "wrong",
     })
     assert resp.status_code == 401
+
+
+def test_forgot_password_and_reset(client):
+    client.application.config["DEBUG"] = True
+    client.post("/api/auth/register", json={
+        "email": "reset@example.com",
+        "password": "oldpass123",
+        "full_name": "Reset User",
+    })
+
+    request_resp = client.post("/api/auth/forgot-password", json={"email": "reset@example.com"})
+    assert request_resp.status_code == 200
+    reset_url = request_resp.get_json()["reset_url"]
+    token = parse_qs(urlparse(reset_url).query)["token"][0]
+
+    reset_resp = client.post("/api/auth/reset-password", json={"token": token, "password": "newpass123"})
+    assert reset_resp.status_code == 200
+    login_resp = client.post("/api/auth/login", json={"email": "reset@example.com", "password": "newpass123"})
+    assert login_resp.status_code == 200
+
+    client.application.config["DEBUG"] = False
 
 
 def test_get_profile_authenticated(client):
