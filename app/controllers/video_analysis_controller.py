@@ -8,7 +8,7 @@ import os
 import shutil
 import tempfile
 import logging
-from flask import jsonify, request
+from flask import current_app, jsonify, request
 from flask_jwt_extended import get_current_user
 from app.extensions import db
 from app.models.video_analysis_model import VideoAnalysis
@@ -21,6 +21,7 @@ from app.services.transcriber import (
     transcribe_audio,
     get_youtube_transcript,
     fetch_youtube_transcript_only,
+    normalize_transcription_language,
     TranscriptionError,
     TranscriptFetchError,
 )
@@ -31,6 +32,23 @@ from app.services.video_ai_analyzer import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _transcription_preferences(raw_language: str | None) -> tuple[str, list[str] | None, bool]:
+    """Return normalized language and caption-selection rules for the request."""
+    raw = (raw_language or "auto").strip().lower().replace("_", "-")
+    aliases = {
+        "auto", "tamil", "ta", "ta-in", "english", "en", "en-us", "en-gb",
+    }
+    if raw not in aliases:
+        raise ValueError("language must be auto, ta, or en")
+
+    language = normalize_transcription_language(raw)
+    if language == "ta":
+        return language, ["ta", "ta-IN"], False
+    if language == "en":
+        return language, ["en", "en-US", "en-GB"], False
+    return language, None, True
 
 
 def analyze_video():
@@ -47,9 +65,16 @@ def analyze_video():
     if not youtube_url:
         return jsonify({"error": "youtube_url parameter is required."}), 400
 
+    try:
+        transcription_language, caption_languages, allow_any_caption_language = _transcription_preferences(
+            data.get("language")
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
     temp_dir = None
     audio_path = None
-    transcript_source = "whisper"  # updated below if captions are found
+    transcript_source = "youtube_transcript_api"
 
     try:
         # ── Step 1: Fetch video metadata (needed for title, thumbnail, video ID) ──
@@ -62,12 +87,22 @@ def analyze_video():
         video_id = metadata.get("id") or extract_video_id(youtube_url)
 
         # ── Step 2: Try youtube-transcript-api caption fetch (fast path) ──
-        transcript = get_youtube_transcript(video_id)
+        transcript = get_youtube_transcript(
+            video_id,
+            preferred_languages=caption_languages,
+            allow_any_language=allow_any_caption_language,
+        )
 
         if transcript:
             logger.info(f"[VideoAnalysis] Caption transcript found for {video_id} — skipping audio download.")
-            transcript_source = "youtube_captions"
+            transcript_source = "youtube_transcript_api"
         else:
+            if transcription_language == "auto":
+                return jsonify({
+                    "error": "This video has no YouTube transcript. Select a transcription language to use Whisper.",
+                    "requires_language_selection": True,
+                }), 409
+
             # ── Step 2b: Fallback — download audio + run Whisper ──
             logger.info(f"[VideoAnalysis] No caption transcript for {video_id} — falling back to Whisper.")
             try:
@@ -77,7 +112,11 @@ def analyze_video():
                 return jsonify({"error": str(e)}), 400
 
             try:
-                transcript = transcribe_audio(audio_path)
+                transcript = transcribe_audio(
+                    audio_path,
+                    model_size=current_app.config.get("WHISPER_MODEL", "small"),
+                    language=transcription_language,
+                )
                 transcript_source = "whisper"
             except TranscriptionError as e:
                 return jsonify({"error": str(e)}), 422
@@ -91,6 +130,7 @@ def analyze_video():
 
         # Attach transcript source metadata into the analysis JSON
         content_analysis["transcript_source"] = transcript_source
+        content_analysis["transcript_language"] = transcription_language
 
         overall_score = content_analysis.get("overall_score") or 8.0
 
@@ -129,10 +169,8 @@ def analyze_video():
 def get_transcript():
     """
     POST /api/video-analysis/transcript
-    Fetches YouTube captions only using youtube-transcript-api.
-
-    Unlike the full analysis endpoint, this route never downloads audio and
-    never falls back to Whisper.  It is intended for the Video Transcript tab.
+    Fetches YouTube captions first, then uses Whisper when the caller selects
+    a language after no YouTube captions are available.
     """
     user = get_current_user()
     if not user:
@@ -143,14 +181,55 @@ def get_transcript():
     if not youtube_url:
         return jsonify({"error": "youtube_url parameter is required."}), 400
 
+    try:
+        transcription_language, caption_languages, allow_any_caption_language = _transcription_preferences(
+            data.get("language")
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
     video_id = extract_video_id(youtube_url)
     if not video_id:
         return jsonify({"error": "Please enter a valid YouTube video URL."}), 400
 
     try:
-        result = fetch_youtube_transcript_only(video_id)
+        result = fetch_youtube_transcript_only(
+            video_id,
+            preferred_languages=caption_languages,
+            allow_any_language=allow_any_caption_language,
+        )
     except TranscriptFetchError as exc:
-        return jsonify({"error": str(exc)}), 422
+        if transcription_language == "auto":
+            return jsonify({
+                "error": "This video has no YouTube transcript. Select a transcription language to use Whisper.",
+                "requires_language_selection": True,
+            }), 409
+
+        temp_dir = None
+        try:
+            temp_dir = tempfile.mkdtemp(prefix="sp_yt_transcript_")
+            audio_path, _ = download_youtube_audio(youtube_url, temp_dir)
+            transcript_text = transcribe_audio(
+                audio_path,
+                model_size=current_app.config.get("WHISPER_MODEL", "small"),
+                language=transcription_language,
+            )
+            return jsonify({
+                "transcript": {
+                    "video_id": video_id,
+                    "transcript": transcript_text,
+                    "language": transcription_language,
+                    "source": "whisper",
+                    "segments": [],
+                }
+            }), 200
+        except VideoDownloadError as download_exc:
+            return jsonify({"error": str(download_exc)}), 422
+        except TranscriptionError as transcribe_exc:
+            return jsonify({"error": str(transcribe_exc)}), 422
+        finally:
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
     except Exception as exc:
         logger.exception("Unexpected transcript-only error for %s", video_id)
         return jsonify({"error": "Unable to fetch the YouTube transcript."}), 500

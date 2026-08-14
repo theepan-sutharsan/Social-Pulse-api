@@ -11,17 +11,28 @@ logger = logging.getLogger(__name__)
 
 # Lazy-loaded Whisper model singleton (loaded once per process)
 _whisper_model = None
+_whisper_model_size = None
 
 
-def _get_whisper_model():
-    global _whisper_model
-    if _whisper_model is None:
+def _get_whisper_model(model_size: str | None = None):
+    global _whisper_model, _whisper_model_size
+    selected_model = model_size or os.getenv("WHISPER_MODEL", "small")
+    if _whisper_model is None or _whisper_model_size != selected_model:
         from faster_whisper import WhisperModel
-        _whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+        try:
+            _whisper_model = WhisperModel(selected_model, device="cpu", compute_type="int8")
+        except Exception:
+            _whisper_model = WhisperModel(selected_model, device="cpu", compute_type="float32")
+        _whisper_model_size = selected_model
     return _whisper_model
 
 
-def get_transcript_for_video(video_id: str, preferred_languages: list[str] = None) -> dict:
+def get_transcript_for_video(
+    video_id: str,
+    preferred_languages: list[str] | None = None,
+    whisper_language: str | None = None,
+    allow_any_language: bool = True,
+) -> dict:
     """
     Fetch transcript for a single YouTube video.
     Returns: {text: str|None, source: 'youtube_api'|'whisper'|'failed', language: str|None}
@@ -57,8 +68,9 @@ def get_transcript_for_video(video_id: str, preferred_languages: list[str] = Non
             except NoTranscriptFound:
                 pass
 
-        # Last resort: take whatever is first available
-        if not selected:
+        # In an explicit language mode, do not return an unrelated caption track.
+        # That allows the Whisper fallback to transcribe the requested language.
+        if not selected and allow_any_language:
             for t in transcript_list:
                 selected = t
                 break
@@ -82,10 +94,10 @@ def get_transcript_for_video(video_id: str, preferred_languages: list[str] = Non
         logger.debug(f"youtube-transcript-api failed for {video_id}: {e}")
 
     # --- Strategy 2: Faster-Whisper fallback ---
-    return _transcribe_with_whisper(video_id)
+    return _transcribe_with_whisper(video_id, language=whisper_language)
 
 
-def _transcribe_with_whisper(video_id: str) -> dict:
+def _transcribe_with_whisper(video_id: str, language: str | None = None) -> dict:
     """
     Download audio via yt-dlp and transcribe with Faster-Whisper.
     Uses a temporary file that is cleaned up after transcription.
@@ -118,7 +130,18 @@ def _transcribe_with_whisper(video_id: str) -> dict:
                 raise FileNotFoundError("Downloaded audio file not found.")
 
         model = _get_whisper_model()
-        segments, info = model.transcribe(audio_path, beam_size=5, vad_filter=False)
+        transcribe_options = {
+            "beam_size": 8 if language == "ta" else 5,
+            "best_of": 5,
+            "temperature": 0.0,
+            "task": "transcribe",
+            "condition_on_previous_text": True,
+            "vad_filter": True,
+            "vad_parameters": {"min_silence_duration_ms": 500},
+        }
+        if language in {"ta", "en"}:
+            transcribe_options["language"] = language
+        segments, info = model.transcribe(audio_path, **transcribe_options)
         full_text = " ".join(seg.text.strip() for seg in segments if seg.text.strip())
 
         if full_text.strip():

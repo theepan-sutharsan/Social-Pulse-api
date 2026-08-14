@@ -18,6 +18,16 @@ def login():
     return auth_controller.login()
 
 
+@bp.route("/forgot-password", methods=["POST"])
+def forgot_password():
+    return auth_controller.request_password_reset()
+
+
+@bp.route("/reset-password", methods=["POST"])
+def reset_password():
+    return auth_controller.reset_password()
+
+
 @bp.route("/logout", methods=["POST"])
 @jwt_required()
 def logout():

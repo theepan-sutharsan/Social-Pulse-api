@@ -19,7 +19,24 @@ class TranscriptFetchError(Exception):
     pass
 
 
-def transcribe_audio(audio_path: str, model_size: str = "tiny") -> str:
+SUPPORTED_TRANSCRIPTION_LANGUAGES = {"auto", "ta", "en"}
+
+
+def normalize_transcription_language(language: str | None) -> str:
+    """Normalize UI/API language values to the codes understood by Whisper."""
+    value = (language or "auto").strip().lower().replace("_", "-")
+    if value in {"ta", "ta-in", "tamil"}:
+        return "ta"
+    if value in {"en", "en-us", "en-gb", "english"}:
+        return "en"
+    return "auto"
+
+
+def transcribe_audio(
+    audio_path: str,
+    model_size: str | None = None,
+    language: str | None = None,
+) -> str:
     """
     Transcribe an audio file using faster-whisper.
     Returns the complete text transcript.
@@ -30,13 +47,28 @@ def transcribe_audio(audio_path: str, model_size: str = "tiny") -> str:
     try:
         from faster_whisper import WhisperModel
         
-        # Initialize model with CPU float32/int8 fallback for universal compatibility
-        try:
-            model = WhisperModel(model_size, device="cpu", compute_type="int8")
-        except Exception:
-            model = WhisperModel(model_size, device="cpu", compute_type="float32")
+        selected_model = model_size or os.getenv("WHISPER_MODEL", "small")
+        selected_language = normalize_transcription_language(language)
 
-        segments, info = model.transcribe(audio_path, beam_size=5)
+        # Initialize model with CPU int8/float32 fallback for universal compatibility.
+        try:
+            model = WhisperModel(selected_model, device="cpu", compute_type="int8")
+        except Exception:
+            model = WhisperModel(selected_model, device="cpu", compute_type="float32")
+
+        transcribe_options = {
+            "beam_size": 8 if selected_language == "ta" else 5,
+            "best_of": 5,
+            "temperature": 0.0,
+            "task": "transcribe",
+            "condition_on_previous_text": True,
+            "vad_filter": True,
+            "vad_parameters": {"min_silence_duration_ms": 500},
+        }
+        if selected_language != "auto":
+            transcribe_options["language"] = selected_language
+
+        segments, info = model.transcribe(audio_path, **transcribe_options)
 
         transcript_parts = []
         for segment in segments:
@@ -57,7 +89,11 @@ def transcribe_audio(audio_path: str, model_size: str = "tiny") -> str:
         raise TranscriptionError(f"Audio transcription error: {str(e)}")
 
 
-def get_youtube_transcript(video_id: str) -> str | None:
+def get_youtube_transcript(
+    video_id: str,
+    preferred_languages: list[str] | None = None,
+    allow_any_language: bool = True,
+) -> str | None:
     """
     Attempt to fetch an existing YouTube caption transcript for a video.
     Uses youtube-transcript-api — no audio download required.
@@ -70,24 +106,40 @@ def get_youtube_transcript(video_id: str) -> str | None:
         return None
 
     try:
-        from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
+        from youtube_transcript_api import YouTubeTranscriptApi
 
+        languages = preferred_languages or ["en", "en-US", "en-GB"]
         try:
-            # Prefer English; fall back to any available language
+            transcript_list = YouTubeTranscriptApi().list(video_id)
+        except Exception:
+            # Keep compatibility with older youtube-transcript-api releases.
             transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        transcript = None
+
+        for finder_name in (
+            "find_transcript",
+            "find_manually_created_transcript",
+            "find_generated_transcript",
+        ):
+            finder = getattr(transcript_list, finder_name, None)
+            if not finder:
+                continue
             try:
-                transcript = transcript_list.find_transcript(["en", "en-US", "en-GB"])
-            except NoTranscriptFound:
-                # Use whatever language is available, auto-translated to English
-                transcript = transcript_list.find_manually_created_transcript()
-        except (NoTranscriptFound, Exception):
-            try:
-                # Last resort: any generated transcript
-                data = YouTubeTranscriptApi.get_transcript(video_id)
-                text = " ".join(entry["text"] for entry in data if entry.get("text"))
-                return text.strip() if text.strip() else None
+                transcript = finder(languages)
             except Exception:
-                return None
+                continue
+            if transcript:
+                break
+
+        # In Tamil/English modes, do not silently select an unrelated caption
+        # track. This lets the caller use the language-locked Whisper fallback.
+        if transcript is None and allow_any_language:
+            try:
+                transcript = next(iter(transcript_list), None)
+            except Exception:
+                transcript = None
+        if transcript is None:
+            return None
 
         data = transcript.fetch()
         # FetchedTranscript is iterable; each item has .text attribute (or dict key 'text')
@@ -108,7 +160,11 @@ def get_youtube_transcript(video_id: str) -> str | None:
         return None
 
 
-def fetch_youtube_transcript_only(video_id: str) -> dict:
+def fetch_youtube_transcript_only(
+    video_id: str,
+    preferred_languages: list[str] | None = None,
+    allow_any_language: bool = True,
+) -> dict:
     """Fetch a YouTube caption transcript without downloading audio or using Whisper.
 
     This is intentionally separate from :func:`get_youtube_transcript`, which is
@@ -145,7 +201,7 @@ def fetch_youtube_transcript_only(video_id: str) -> dict:
             ) from exc
 
     selected = None
-    preferred_languages = ["en", "en-US", "en-GB"]
+    preferred_languages = preferred_languages or ["en", "en-US", "en-GB"]
 
     # Prefer manually-created captions, then generated captions, and finally
     # the first available language so non-English videos remain usable.
@@ -160,7 +216,7 @@ def fetch_youtube_transcript_only(video_id: str) -> dict:
         if selected:
             break
 
-    if selected is None:
+    if selected is None and allow_any_language:
         try:
             selected = next(iter(transcript_list), None)
         except Exception:
